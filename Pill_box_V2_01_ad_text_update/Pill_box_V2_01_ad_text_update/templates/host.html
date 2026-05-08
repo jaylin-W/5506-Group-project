@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}隐藏编辑页面 - Pill box V2.01{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1>隐藏编辑页面</h1>
+            <p class="mb-0">在这里可以在线编辑主页和关于页面的固定板块内容。</p>
+        </div>
+        <a class="btn btn-outline-secondary" href="{{ url_for('host_logout') }}">退出编辑页面</a>
+    </div>
+</section>
+
+<form method="post" class="section-block">
+    <input type="hidden" name="action" value="save_content">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <h2 class="section-title">主页 Hero 区域</h2>
+    <div class="mb-3">
+        <label class="form-label">主页大标题</label>
+        <input type="text" name="home_hero_title" class="form-control" value="{{ blocks.home_hero_title }}">
+    </div>
+
+    <div class="mb-4">
+        <label class="form-label">主页简介</label>
+        <textarea name="home_hero_subtitle" rows="4" class="form-control">{{ blocks.home_hero_subtitle }}</textarea>
+    </div>
+
+    <h2 class="section-title">主页核心功能</h2>
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="admin-edit-card">
+                <label class="form-label">功能一标题</label>
+                <input type="text" name="home_feature_1_title" class="form-control mb-2" value="{{ blocks.home_feature_1_title }}">
+                <label class="form-label">功能一内容</label>
+                <textarea name="home_feature_1_body" rows="4" class="form-control">{{ blocks.home_feature_1_body }}</textarea>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="admin-edit-card">
+                <label class="form-label">功能二标题</label>
+                <input type="text" name="home_feature_2_title" class="form-control mb-2" value="{{ blocks.home_feature_2_title }}">
+                <label class="form-label">功能二内容</label>
+                <textarea name="home_feature_2_body" rows="4" class="form-control">{{ blocks.home_feature_2_body }}</textarea>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="admin-edit-card">
+                <label class="form-label">功能三标题</label>
+                <input type="text" name="home_feature_3_title" class="form-control mb-2" value="{{ blocks.home_feature_3_title }}">
+                <label class="form-label">功能三内容</label>
+                <textarea name="home_feature_3_body" rows="4" class="form-control">{{ blocks.home_feature_3_body }}</textarea>
+            </div>
+        </div>
+    </div>
+
+
+    <h2 class="section-title mt-4">主页广告卡片文案</h2>
+    <p class="text-muted">这里编辑首页 4 个自动滚动广告卡片的文字。广告卡片没有按钮，也不会跳转。</p>
+
+    <div class="row g-3">
+        {% for i in range(1, 5) %}
+        <div class="col-lg-6">
+            <div class="admin-edit-card">
+                <h5 class="mb-3">广告卡片 {{ i }}</h5>
+
+                <label class="form-label">角标文字</label>
+                <input type="text" name="promo_{{ i }}_badge" class="form-control mb-2" value="{{ blocks['promo_' ~ i ~ '_badge'] }}">
+
+                <label class="form-label">广告标题</label>
+                <input type="text" name="promo_{{ i }}_title" class="form-control mb-2" value="{{ blocks['promo_' ~ i ~ '_title'] }}">
+
+                <label class="form-label">广告副标题</label>
+                <input type="text" name="promo_{{ i }}_subtitle" class="form-control mb-2" value="{{ blocks['promo_' ~ i ~ '_subtitle'] }}">
+
+                <label class="form-label">广告说明</label>
+                <textarea name="promo_{{ i }}_desc" rows="4" class="form-control">{{ blocks['promo_' ~ i ~ '_desc'] }}</textarea>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <h2 class="section-title mt-4">关于页面</h2>
+    <div class="mb-3">
+        <label class="form-label">关于页面标题</label>
+        <input type="text" name="about_intro_title" class="form-control" value="{{ blocks.about_intro_title }}">
+    </div>
+
+    <div class="mb-4">
+        <label class="form-label">关于页面产品理念内容</label>
+        <textarea name="about_intro_body" rows="5" class="form-control">{{ blocks.about_intro_body }}</textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-lg">保存修改</button>
+    <a href="{{ url_for('index') }}" class="btn btn-outline-primary btn-lg ms-2">查看主页效果</a>
+</form>
+{% endblock %}
