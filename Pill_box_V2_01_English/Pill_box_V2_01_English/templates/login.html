@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Login - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <div class="card form-card shadow-sm">
+        <div class="card-body">
+            <h2 class="mb-4 text-center">Login</h2>
+
+            <form method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-3">
+                    <label class="form-label">Usernameor Email</label>
+                    <input type="text" name="account" class="form-control" placeholder="Enter username or email" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-control" placeholder="Enter password" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">Log In</button>
+            </form>
+
+            <p class="text-center mt-3 mb-0">
+                Don’t have an account?
+                <a href="{{ url_for('register') }}">Register Now</a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

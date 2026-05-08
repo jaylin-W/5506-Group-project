@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Home - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="hero-section">
+    <div class="row align-items-center g-4">
+        <div class="col-lg-7">
+            <span class="hero-badge mb-3">Smart Health Supplement Box · {{ project_version }}</span>
+            <h1 class="display-5 fw-bold">{{ blocks.home_hero_title }}</h1>
+            <p class="lead mt-3">{{ blocks.home_hero_subtitle }}</p>
+            <div class="mt-4 d-flex flex-wrap gap-2">
+                <a class="btn btn-light btn-lg" href="{{ url_for('register') }}">Register Now</a>
+                <a class="btn btn-outline-light btn-lg" href="{{ url_for('about') }}">Learn More</a>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="hero-card">
+                <h4>Today’s Reminders</h4>
+                <p>08:00 Vitamin C</p>
+                <p>12:30 Fish Oil Softgel</p>
+                <p>21:00 Calcium Tablet</p>
+                <small>Smart Reminders · Organized Compartments · Health Records</small>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="promo-section">
+    <div id="promoCarousel" class="carousel slide promo-carousel" data-bs-ride="carousel" data-bs-interval="3200" data-bs-pause="false" data-bs-touch="true">
+        <div class="carousel-inner">
+            {% for ad in promo_ads %}
+            <div class="carousel-item {% if loop.first %}active{% endif %}">
+                <div class="promo-banner" style="background-image: linear-gradient(90deg, rgba(12, 19, 41, 0.48), rgba(12, 19, 41, 0.10)), url('{{ url_for('static', filename='images/' ~ ad.image) }}');">
+                    <div class="promo-banner-content">
+                        <span class="promo-tag">{{ ad.badge }}</span>
+                        <h2>{{ ad.title }}</h2>
+                        <h5>{{ ad.subtitle }}</h5>
+                        <p>{{ ad.desc }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section id="features" class="section-block section-gradient-a">
+    <h2 class="section-title">Core Features</h2>
+    <div class="row g-4">
+        <div class="col-md-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ blocks.home_feature_1_title }}</h5>
+                    <p class="card-text">{{ blocks.home_feature_1_body }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ blocks.home_feature_2_title }}</h5>
+                    <p class="card-text">{{ blocks.home_feature_2_body }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ blocks.home_feature_3_title }}</h5>
+                    <p class="card-text">{{ blocks.home_feature_3_body }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="usage" class="section-block section-gradient-b">
+    <h2 class="section-title">Use Cases</h2>
+    <div class="row">
+        <div class="col-md-6">
+            <ul class="list-group list-group-flush rounded-4 overflow-hidden shadow-sm">
+                <li class="list-group-item">Office workers: avoid missing doses during busy workdays.</li>
+                <li class="list-group-item">Students: build regular nutrition habits.</li>
+                <li class="list-group-item">Older adults: reduce missed or repeated doses.</li>
+                <li class="list-group-item">Families: manage supplement schedules for household members.</li>
+            </ul>
+        </div>
+        <div class="col-md-6 mt-4 mt-md-0">
+            <div class="info-box colorful-box">
+                <h5>System Advantages</h5>
+                <p>
+                    This website uses Flask for the server and Python’s built-in sqlite3 module for the SQLite database.
+                    It also uses Flask-Login for basic user session management.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

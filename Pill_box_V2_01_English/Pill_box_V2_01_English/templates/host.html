@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Hidden Editor Page - Pill box V2.01{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1>Hidden Editor Page</h1>
+            <p class="mb-0">You can edit fixed content blocks for the Home and About pages here.</p>
+        </div>
+        <a class="btn btn-outline-secondary" href="{{ url_for('host_logout') }}">Exit Editor</a>
+    </div>
+</section>
+
+<form method="post" class="section-block">
+    <input type="hidden" name="action" value="save_content">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <h2 class="section-title">Home Hero Section</h2>
+    <div class="mb-3">
+        <label class="form-label">HomeMain Title</label>
+        <input type="text" name="home_hero_title" class="form-control" value="{{ blocks.home_hero_title }}">
+    </div>
+
+    <div class="mb-4">
+        <label class="form-label">HomeIntroduction</label>
+        <textarea name="home_hero_subtitle" rows="4" class="form-control">{{ blocks.home_hero_subtitle }}</textarea>
+    </div>
+
+    <h2 class="section-title">HomeCore Features</h2>
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="admin-edit-card">
+                <label class="form-label">Feature 1 Title</label>
+                <input type="text" name="home_feature_1_title" class="form-control mb-2" value="{{ blocks.home_feature_1_title }}">
+                <label class="form-label">Feature 1 Content</label>
+                <textarea name="home_feature_1_body" rows="4" class="form-control">{{ blocks.home_feature_1_body }}</textarea>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="admin-edit-card">
+                <label class="form-label">Feature 2 Title</label>
+                <input type="text" name="home_feature_2_title" class="form-control mb-2" value="{{ blocks.home_feature_2_title }}">
+                <label class="form-label">Feature 2 Content</label>
+                <textarea name="home_feature_2_body" rows="4" class="form-control">{{ blocks.home_feature_2_body }}</textarea>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="admin-edit-card">
+                <label class="form-label">Feature 3 Title</label>
+                <input type="text" name="home_feature_3_title" class="form-control mb-2" value="{{ blocks.home_feature_3_title }}">
+                <label class="form-label">Feature 3 Content</label>
+                <textarea name="home_feature_3_body" rows="4" class="form-control">{{ blocks.home_feature_3_body }}</textarea>
+            </div>
+        </div>
+    </div>
+
+
+    <h2 class="section-title mt-4">HomeAdvertisement CardText</h2>
+    <p class="text-muted">Edit the text for the four auto-rotating advertisement cards on the home page. These cards have no buttons and no redirects.</p>
+
+    <div class="row g-3">
+        {% for i in range(1, 5) %}
+        <div class="col-lg-6">
+            <div class="admin-edit-card">
+                <h5 class="mb-3">Advertisement Card {{ i }}</h5>
+
+                <label class="form-label">Badge Text</label>
+                <input type="text" name="promo_{{ i }}_badge" class="form-control mb-2" value="{{ blocks['promo_' ~ i ~ '_badge'] }}">
+
+                <label class="form-label">Ad Title</label>
+                <input type="text" name="promo_{{ i }}_title" class="form-control mb-2" value="{{ blocks['promo_' ~ i ~ '_title'] }}">
+
+                <label class="form-label">Ad Subtitle</label>
+                <input type="text" name="promo_{{ i }}_subtitle" class="form-control mb-2" value="{{ blocks['promo_' ~ i ~ '_subtitle'] }}">
+
+                <label class="form-label">Ad Description</label>
+                <textarea name="promo_{{ i }}_desc" rows="4" class="form-control">{{ blocks['promo_' ~ i ~ '_desc'] }}</textarea>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <h2 class="section-title mt-4">AboutPage</h2>
+    <div class="mb-3">
+        <label class="form-label">AboutPage Title</label>
+        <input type="text" name="about_intro_title" class="form-control" value="{{ blocks.about_intro_title }}">
+    </div>
+
+    <div class="mb-4">
+        <label class="form-label">AboutPage Product Concept Content</label>
+        <textarea name="about_intro_body" rows="5" class="form-control">{{ blocks.about_intro_body }}</textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-lg">Save Changes</button>
+    <a href="{{ url_for('index') }}" class="btn btn-outline-primary btn-lg ms-2">View Home Page</a>
+</form>
+{% endblock %}

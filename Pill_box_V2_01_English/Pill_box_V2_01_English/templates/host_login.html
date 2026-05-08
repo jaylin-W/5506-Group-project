@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}HostLog In - Smart Supplement Pill Box{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <div class="card form-card shadow-sm">
+        <div class="card-body">
+            <h2 class="mb-3 text-center">Editor Login</h2>
+            <p class="text-muted text-center">After entering the editor password, you can edit fixed content blocks for the Home and About pages.</p>
+
+            <form method="post">
+                <input type="hidden" name="action" value="login">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="mb-3">
+                    <label class="form-label">Editor Password</label>
+                    <input type="password" name="host_password" class="form-control" placeholder="Default: admin123" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">Enter Editor</button>
+            </form>
+
+            <div class="alert alert-warning mt-3 mb-0">
+                The default demo password is <strong>admin123</strong>。For production use, change HOST_PASSWORD in .env.
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

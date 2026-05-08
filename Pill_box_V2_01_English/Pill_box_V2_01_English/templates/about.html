@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}About - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="page-header colorful-header">
+    <h1>{{ blocks.about_intro_title }}</h1>
+    <p>An intelligent support device for daily health management.</p>
+</section>
+
+<section id="features" class="section-block">
+    <h2 class="section-title">Product Concept</h2>
+    <p>{{ blocks.about_intro_body }}</p>
+
+    <div class="row g-4 mt-2">
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body">
+                    <h5>Timely Reminders</h5>
+                    <p>System reminders help reduce missed doses.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body">
+                    <h5>Clearer Records</h5>
+                    <p>Helps users understand their supplement plans and health goals.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body">
+                    <h5>Easier Management</h5>
+                    <p>Supports accounts and can be extended with more personalized features.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="usage" class="section-block bg-soft">
+    <h2 class="section-title">Future Expandable Features</h2>
+    <ol>
+        <li>Add supplement inventory management.</li>
+        <li>Set daily, weekly, and monthly reminder plans.</li>
+        <li>Record taken and missed status.</li>
+        <li>Add low-stock reminders.</li>
+        <li>Support shared family management.</li>
+    </ol>
+</section>
+{% endblock %}
