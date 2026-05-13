@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, flash, request, session, jsonify, send_from_directory
+from flask import Flask, render_template, redirect, url_for, flash, request, session, jsonify, send_from_directory, send_file
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -13,7 +13,8 @@ from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from email_validator import validate_email, EmailNotValidError
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from io import BytesIO
 import sqlite3
 import os
 import re
@@ -48,6 +49,9 @@ app.config["DEVICE_API_TOKEN"] = os.environ.get("DEVICE_API_TOKEN")
 app.config["VAPID_PUBLIC_KEY"] = os.environ.get("VAPID_PUBLIC_KEY")
 app.config["VAPID_PRIVATE_KEY"] = os.environ.get("VAPID_PRIVATE_KEY")
 app.config["VAPID_CLAIMS_SUB"] = os.environ.get("VAPID_CLAIMS_SUB", "mailto:admin@example.com")
+app.config["FACE_ENROLLMENT_REQUESTED_SAMPLES"] = 3
+app.config["FACE_ENROLLMENT_WINDOW_MINUTES"] = 5
+app.config["FACE_ENROLLMENT_MAX_PHOTO_BYTES"] = 700 * 1024
 
 logging.basicConfig(
     level=logging.INFO,
@@ -322,6 +326,28 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS face_enrollment_session (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            product_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            person_name TEXT NOT NULL,
+            requested_samples INTEGER NOT NULL DEFAULT 3,
+            captured_samples INTEGER NOT NULL DEFAULT 0,
+            message TEXT,
+            device_id TEXT,
+            photo_mime TEXT,
+            photo_data BLOB,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            completed_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES user(id)
+        )
+        """
+    )
     for key, value in DEFAULT_CONTENT_BLOCKS.items():
         conn.execute(
             "INSERT OR IGNORE INTO content_block (block_key, block_value) VALUES (?, ?)",
@@ -486,6 +512,7 @@ def get_face_unlock_status(user_id):
 
 def record_face_failure(user_id):
     conn = get_db_connection()
+    should_notify = False
     try:
         row = conn.execute(
             "SELECT face_failed_attempts, unlock_required FROM user WHERE id = ?",
@@ -494,8 +521,11 @@ def record_face_failure(user_id):
         if row is None:
             return None
 
+        threshold = app.config["FACE_FAILURE_THRESHOLD"]
+        was_unlock_required = bool(row["unlock_required"])
         failed_attempts = (row["face_failed_attempts"] or 0) + 1
-        unlock_required = 1 if failed_attempts >= app.config["FACE_FAILURE_THRESHOLD"] else row["unlock_required"]
+        unlock_required = 1 if failed_attempts >= threshold else row["unlock_required"]
+        should_notify = failed_attempts >= threshold and not was_unlock_required
         conn.execute(
             """
             UPDATE user
@@ -508,7 +538,11 @@ def record_face_failure(user_id):
     finally:
         conn.close()
 
-    return get_face_unlock_status(user_id)
+    status = get_face_unlock_status(user_id)
+    if status is not None:
+        status["should_notify"] = should_notify
+        status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
+    return status
 
 
 def reset_face_unlock_status(user_id):
@@ -530,6 +564,7 @@ def reset_face_unlock_status(user_id):
 def find_user_id_from_payload(payload):
     user_id = payload.get("user_id")
     username = (payload.get("username") or "").strip()
+    product_code = (payload.get("product_code") or "").strip().upper()
 
     conn = get_db_connection()
     try:
@@ -537,12 +572,222 @@ def find_user_id_from_payload(payload):
             row = conn.execute("SELECT id FROM user WHERE id = ?", (user_id,)).fetchone()
         elif username:
             row = conn.execute("SELECT id FROM user WHERE username = ?", (username,)).fetchone()
+        elif product_code:
+            row = conn.execute("SELECT id FROM user WHERE product_code = ?", (product_code,)).fetchone()
         else:
             row = None
     finally:
         conn.close()
 
     return row["id"] if row else None
+
+
+def resolve_device_request_user(payload):
+    configured_token = app.config["DEVICE_API_TOKEN"]
+    provided_token = request.headers.get("X-Device-Token") or payload.get("device_token")
+
+    if configured_token:
+        if provided_token != configured_token:
+            return None, ("Invalid device token.", 403)
+
+        user_id = find_user_id_from_payload(payload)
+        if user_id is None and current_user.is_authenticated:
+            user_id = current_user.id
+    elif current_user.is_authenticated:
+        user_id = current_user.id
+    else:
+        return None, ("Login required or configure DEVICE_API_TOKEN for the pill box device.", 401)
+
+    if user_id is None:
+        return None, ("User not found. Send product_code, username, or user_id with the device request.", 404)
+
+    return user_id, None
+
+
+def get_device_payload():
+    payload = request.get_json(silent=True) or {}
+    if not payload:
+        payload = {}
+
+    product_code = request.headers.get("X-Product-Code") or request.args.get("product_code")
+    device_id = request.headers.get("X-Device-Id") or request.args.get("device_id")
+    if product_code and not payload.get("product_code"):
+        payload["product_code"] = product_code
+    if device_id and not payload.get("device_id"):
+        payload["device_id"] = device_id
+    return payload
+
+
+def create_face_enrollment_session(user):
+    now = utc_now_iso()
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=app.config["FACE_ENROLLMENT_WINDOW_MINUTES"])).replace(microsecond=0).isoformat()
+    person_name = re.sub(r"[^A-Za-z0-9_-]+", "_", user.username).strip("_") or f"user_{user.id}"
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET status = 'expired', updated_at = ?
+            WHERE user_id = ? AND status IN ('pending', 'started')
+            """,
+            (now, user.id),
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO face_enrollment_session
+            (user_id, product_code, status, person_name, requested_samples, captured_samples, created_at, updated_at, expires_at)
+            VALUES (?, ?, 'pending', ?, ?, 0, ?, ?, ?)
+            """,
+            (
+                user.id,
+                user.product_code,
+                person_name,
+                app.config["FACE_ENROLLMENT_REQUESTED_SAMPLES"],
+                now,
+                now,
+                expires_at,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_face_enrollment_session(session_id, user_id=None):
+    conn = get_db_connection()
+    try:
+        if user_id is None:
+            row = conn.execute(
+                "SELECT * FROM face_enrollment_session WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM face_enrollment_session WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
+            ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def serialize_face_enrollment_session(row):
+    has_photo = bool(row["photo_data"])
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "product_code": row["product_code"],
+        "person_name": row["person_name"],
+        "requested_samples": row["requested_samples"],
+        "captured_samples": row["captured_samples"],
+        "message": row["message"],
+        "device_id": row["device_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "expires_at": row["expires_at"],
+        "completed_at": row["completed_at"],
+        "has_photo": has_photo,
+        "photo_url": url_for("face_enrollment_photo", session_id=row["id"]) if has_photo else None,
+    }
+
+
+def get_active_face_enrollment_for_user(user_id):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM face_enrollment_session
+            WHERE user_id = ? AND status IN ('pending', 'started') AND expires_at > ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id, now),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def get_latest_face_enrollment_for_user(user_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM face_enrollment_session
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def mark_face_enrollment_started(row, device_id=None):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET status = 'started', device_id = COALESCE(?, device_id), updated_at = ?
+            WHERE id = ? AND status IN ('pending', 'started')
+            """,
+            (device_id, now, row["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_face_enrollment_result(session_id, user_id, status, captured_samples=0, message=None, device_id=None):
+    now = utc_now_iso()
+    completed_at = now if status in ("completed", "failed", "expired") else None
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET status = ?,
+                captured_samples = ?,
+                message = ?,
+                device_id = COALESCE(?, device_id),
+                updated_at = ?,
+                completed_at = COALESCE(?, completed_at)
+            WHERE id = ? AND user_id = ?
+            """,
+            (status, captured_samples, message, device_id, now, completed_at, session_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_face_enrollment_photo(session_id, user_id, photo_data, photo_mime, device_id=None):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET photo_data = ?,
+                photo_mime = ?,
+                device_id = COALESCE(?, device_id),
+                updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (photo_data, photo_mime, device_id, now, session_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def save_push_subscription(user_id, subscription):
@@ -610,6 +855,12 @@ def can_send_web_push():
 
 def send_web_push_notification(user_id, status):
     subscriptions = get_push_subscriptions(user_id)
+    logger.info(
+        "Web Push requested for user_id=%s subscriptions=%s configured=%s",
+        user_id,
+        len(subscriptions),
+        can_send_web_push(),
+    )
     if not can_send_web_push():
         logger.info("Web Push skipped: pywebpush or VAPID keys are not configured.")
         return {"sent": 0, "configured": False, "subscriptions": len(subscriptions)}
@@ -642,6 +893,7 @@ def send_web_push_notification(user_id, status):
             logger.warning(f"Invalid stored push subscription: {e}")
             delete_push_subscription(row["endpoint"])
 
+    logger.info("Web Push completed for user_id=%s sent=%s subscriptions=%s", user_id, sent_count, len(subscriptions))
     return {"sent": sent_count, "configured": True, "subscriptions": len(subscriptions)}
 
 
@@ -886,10 +1138,12 @@ def logout():
 
 
 @app.route("/api/face-unlock/status")
+@limiter.limit("10000 per hour", override_defaults=True)
 @login_required
 def face_unlock_status():
     status = get_face_unlock_status(current_user.id)
     status["unlock_url"] = url_for("unlock_pill_box")
+    status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
     return jsonify(status)
 
 
@@ -930,31 +1184,204 @@ def push_test():
 @csrf.exempt
 def report_face_unlock_failure():
     payload = request.get_json(silent=True) or {}
-    configured_token = app.config["DEVICE_API_TOKEN"]
-    provided_token = request.headers.get("X-Device-Token") or payload.get("device_token")
-
-    if configured_token:
-        if provided_token != configured_token:
-            return jsonify({"error": "Invalid device token."}), 403
-        user_id = find_user_id_from_payload(payload)
-        if user_id is None and current_user.is_authenticated:
-            user_id = current_user.id
-    elif current_user.is_authenticated:
-        user_id = current_user.id
-    else:
-        return jsonify({"error": "Login required or configure DEVICE_API_TOKEN for the pill box device."}), 401
-
-    if user_id is None:
-        return jsonify({"error": "User not found. Send username or user_id with the device request."}), 404
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
 
     status = record_face_failure(user_id)
     if status is None:
         return jsonify({"error": "User not found."}), 404
 
     status["unlock_url"] = url_for("unlock_pill_box")
-    if status["unlock_required"]:
+    if status.get("should_notify"):
         status["push"] = send_web_push_notification(user_id, status)
+    else:
+        status["push"] = {"sent": 0, "reason": "failure threshold not reached or already notified"}
+    logger.info(
+        "Face unlock failure reported: user_id=%s product_code=%s failed_attempts=%s unlock_required=%s push=%s",
+        user_id,
+        payload.get("product_code"),
+        status.get("failed_attempts"),
+        status.get("unlock_required"),
+        status.get("push"),
+    )
     return jsonify(status)
+
+
+@app.route("/api/face-unlock/device-status", methods=["POST"])
+@csrf.exempt
+def face_unlock_device_status():
+    payload = request.get_json(silent=True) or {}
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    status = get_face_unlock_status(user_id)
+    if status is None:
+        return jsonify({"error": "User not found."}), 404
+
+    status["unlock_url"] = url_for("unlock_pill_box")
+    status["server_time"] = utc_now_iso()
+    status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
+    return jsonify(status)
+
+
+@app.route("/api/face-unlock/success", methods=["POST"])
+@csrf.exempt
+def report_face_unlock_success():
+    payload = request.get_json(silent=True) or {}
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    reset_face_unlock_status(user_id)
+    status = get_face_unlock_status(user_id)
+    status["unlock_url"] = url_for("unlock_pill_box")
+    status["device_action"] = "continue"
+    return jsonify(status)
+
+
+@app.route("/face-enrollment/start", methods=["POST"])
+@login_required
+def start_face_enrollment():
+    if not current_user.product_code:
+        flash("Please link your product unlock code before starting face enrollment.", "warning")
+        return redirect(url_for("profile"))
+
+    session_id = create_face_enrollment_session(current_user)
+    flash("Face enrollment request sent. Keep the pill box powered on and follow the camera instructions.", "success")
+    return redirect(url_for("face_enrollment_page", session_id=session_id))
+
+
+@app.route("/face-enrollment/<int:session_id>")
+@login_required
+def face_enrollment_page(session_id):
+    row = get_face_enrollment_session(session_id, current_user.id)
+    if row is None:
+        flash("Face enrollment session not found.", "danger")
+        return redirect(url_for("profile"))
+
+    return render_template(
+        "face_enrollment.html",
+        enrollment=serialize_face_enrollment_session(row),
+    )
+
+
+@app.route("/api/face-enrollment/<int:session_id>/status")
+@login_required
+def face_enrollment_status(session_id):
+    row = get_face_enrollment_session(session_id, current_user.id)
+    if row is None:
+        return jsonify({"error": "Face enrollment session not found."}), 404
+    return jsonify(serialize_face_enrollment_session(row))
+
+
+@app.route("/face-enrollment/<int:session_id>/photo")
+@login_required
+def face_enrollment_photo(session_id):
+    row = get_face_enrollment_session(session_id, current_user.id)
+    if row is None or not row["photo_data"]:
+        return jsonify({"error": "Face enrollment photo not found."}), 404
+
+    return send_file(
+        BytesIO(row["photo_data"]),
+        mimetype=row["photo_mime"] or "image/jpeg",
+        download_name=f"face-enrollment-{session_id}.jpg",
+    )
+
+
+@app.route("/api/face-enrollment/device-command", methods=["POST"])
+@csrf.exempt
+def face_enrollment_device_command():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    row = get_active_face_enrollment_for_user(user_id)
+    if row is None:
+        return jsonify({"command": "idle", "server_time": utc_now_iso()})
+
+    mark_face_enrollment_started(row, payload.get("device_id"))
+    return jsonify(
+        {
+            "command": "enroll",
+            "session_id": str(row["id"]),
+            "person_name": row["person_name"],
+            "requested_samples": row["requested_samples"],
+            "expires_at": row["expires_at"],
+            "server_time": utc_now_iso(),
+        }
+    )
+
+
+@app.route("/api/face-enrollment/device-result", methods=["POST"])
+@csrf.exempt
+def face_enrollment_device_result():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    try:
+        session_id = int(payload.get("session_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "session_id is required."}), 400
+
+    status = (payload.get("status") or "").strip().lower()
+    if status not in ("started", "completed", "failed", "expired"):
+        return jsonify({"error": "Invalid enrollment status."}), 400
+
+    captured_samples = payload.get("captured_samples") or 0
+    try:
+        captured_samples = max(0, int(captured_samples))
+    except (TypeError, ValueError):
+        captured_samples = 0
+
+    row = get_face_enrollment_session(session_id, user_id)
+    if row is None:
+        return jsonify({"error": "Face enrollment session not found."}), 404
+
+    update_face_enrollment_result(
+        session_id=session_id,
+        user_id=user_id,
+        status=status,
+        captured_samples=captured_samples,
+        message=(payload.get("message") or "").strip() or None,
+        device_id=payload.get("device_id"),
+    )
+    updated = get_face_enrollment_session(session_id, user_id)
+    return jsonify(serialize_face_enrollment_session(updated))
+
+
+@app.route("/api/face-enrollment/device-photo/<int:session_id>", methods=["POST"])
+@csrf.exempt
+def face_enrollment_device_photo(session_id):
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    row = get_face_enrollment_session(session_id, user_id)
+    if row is None:
+        return jsonify({"error": "Face enrollment session not found."}), 404
+
+    photo_data = request.get_data()
+    if not photo_data:
+        return jsonify({"error": "Photo body is empty."}), 400
+    if len(photo_data) > app.config["FACE_ENROLLMENT_MAX_PHOTO_BYTES"]:
+        return jsonify({"error": "Photo is too large."}), 413
+
+    photo_mime = request.headers.get("Content-Type") or "image/jpeg"
+    save_face_enrollment_photo(session_id, user_id, photo_data, photo_mime, payload.get("device_id"))
+    updated = get_face_enrollment_session(session_id, user_id)
+    return jsonify(serialize_face_enrollment_session(updated))
 
 
 @app.route("/unlock", methods=["GET", "POST"])
@@ -1149,6 +1576,7 @@ def profile():
             return redirect(url_for("profile"))
 
     schedules = get_user_schedules(current_user.id)
+    latest_face_enrollment = get_latest_face_enrollment_for_user(current_user.id)
     return render_template(
         "profile.html",
         supplement_options=SUPPLEMENT_OPTIONS,
@@ -1159,6 +1587,7 @@ def profile():
         security_question_text=SECURITY_QUESTION_LABELS.get(current_user.security_question),
         product_code_example=PRODUCT_CODE_EXAMPLE,
         default_product_code=DEFAULT_PRODUCT_CODE,
+        latest_face_enrollment=serialize_face_enrollment_session(latest_face_enrollment) if latest_face_enrollment else None,
     )
 
 

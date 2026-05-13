@@ -125,6 +125,32 @@
     </div>
 </section>
 
+<section class="section-block face-enrollment-panel">
+    <div class="face-enrollment-panel-copy">
+        <span class="section-kicker">Face Recognition Setup</span>
+        <h2 class="section-title mb-2">Enroll My Face</h2>
+        <p class="text-muted mb-0">Start a guided camera enrollment session for the product linked to this account.</p>
+    </div>
+
+    <div class="face-enrollment-actions">
+        {% if current_user.product_code %}
+            <form method="post" action="{{ url_for('start_face_enrollment') }}" target="_blank">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-primary">Start Face Enrollment</button>
+            </form>
+            <span class="face-enrollment-product">Product {{ current_user.product_code }}</span>
+        {% else %}
+            <button type="button" class="btn btn-outline-secondary" disabled>Start Face Enrollment</button>
+            <span class="face-enrollment-product">Link product code {{ default_product_code }} first.</span>
+        {% endif %}
+
+        {% if latest_face_enrollment %}
+            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('face_enrollment_page', session_id=latest_face_enrollment.id) }}" target="_blank">View Latest Session</a>
+            <span class="face-enrollment-product">Latest status: {{ latest_face_enrollment.status }}</span>
+        {% endif %}
+    </div>
+</section>
+
 <section id="features" class="section-block mt-4">
     <h2 class="section-title">Add Supplement Schedule</h2>
 

@@ -67,12 +67,34 @@
                         <span class="face-notification-status" data-face-notification-status></span>
                     </div>
                 </div>
-                <div class="face-unlock-alert {% if not current_user.unlock_required %}d-none{% endif %}" data-face-alert>
+                <div class="face-unlock-alert d-none" data-face-alert>
                     <a class="face-unlock-alert-title" href="{{ url_for('unlock_pill_box') }}">请输入密码解锁药盒</a>
                     <span data-face-alert-message>目前面部识别已失败3次，请进入网站输入解锁密码。</span>
                     <button type="button" class="btn btn-sm btn-outline-primary ms-auto" data-enable-face-notifications>Enable Phone Alerts</button>
                     <button type="button" class="btn btn-sm btn-primary" data-send-test-notification>Send Test Notification</button>
                     <span class="face-notification-status" data-face-notification-status></span>
+                </div>
+                <div class="modal fade" id="faceUnlockModal" tabindex="-1" aria-labelledby="faceUnlockModalLabel" aria-hidden="true" data-face-unlock-modal>
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content face-unlock-modal">
+                            <div class="modal-header">
+                                <h2 class="modal-title" id="faceUnlockModalLabel">请输入密码解锁药盒</h2>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <form method="post" action="{{ url_for('unlock_pill_box') }}">
+                                <div class="modal-body">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <p data-face-unlock-modal-message>目前面部识别已失败3次，请输入解锁密码。</p>
+                                    <label class="form-label" for="faceUnlockPassword">Pill Box Unlock Password</label>
+                                    <input id="faceUnlockPassword" type="password" name="unlock_password" class="form-control" required autocomplete="current-password">
+                                </div>
+                                <div class="modal-footer">
+                                    <a class="btn btn-outline-secondary" href="{{ url_for('unlock_pill_box') }}">Open Unlock Page</a>
+                                    <button type="submit" class="btn btn-primary">Unlock Pill Box</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
                 </div>
             {% endif %}
 

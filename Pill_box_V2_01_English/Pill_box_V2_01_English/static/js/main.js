@@ -57,10 +57,16 @@ document.addEventListener("DOMContentLoaded", function () {
     const unlockUrl = document.body.dataset.faceUnlockUrl || "/unlock";
     const faceAlert = document.querySelector("[data-face-alert]");
     const faceAlertMessage = document.querySelector("[data-face-alert-message]");
+    const faceUnlockModalElement = document.querySelector("[data-face-unlock-modal]");
+    const faceUnlockModalMessage = document.querySelector("[data-face-unlock-modal-message]");
     const notificationButtons = document.querySelectorAll("[data-enable-face-notifications]");
     const testNotificationButtons = document.querySelectorAll("[data-send-test-notification]");
     const notificationStatuses = document.querySelectorAll("[data-face-notification-status]");
     let serviceWorkerRegistration = null;
+    let faceUnlockModal = null;
+    let faceUnlockStatusReady = false;
+    let lastFaceFailureKey = null;
+    let faceUnlockEventVisible = false;
 
     const setNotificationStatus = (message) => {
         notificationStatuses.forEach((status) => {
@@ -243,14 +249,57 @@ document.addEventListener("DOMContentLoaded", function () {
         setNotificationStatus("Test notification sent.");
     };
 
+    const getFaceFailureKey = (status) => (
+        status.last_face_failure_at || `${status.failed_attempts || 0}:${status.unlock_required ? "locked" : "clear"}`
+    );
+
+    const shouldRevealFaceUnlock = (status) => {
+        const currentKey = getFaceFailureKey(status);
+
+        if (!faceUnlockStatusReady) {
+            lastFaceFailureKey = currentKey;
+            faceUnlockStatusReady = true;
+            return false;
+        }
+
+        if (!status.unlock_required) {
+            lastFaceFailureKey = currentKey;
+            faceUnlockEventVisible = false;
+            return false;
+        }
+
+        const isNewDeviceFailure = currentKey !== lastFaceFailureKey;
+        lastFaceFailureKey = currentKey;
+        return isNewDeviceFailure;
+    };
+
+    const showFaceUnlockModal = (status) => {
+        if (!faceUnlockModalElement || !window.bootstrap) {
+            return;
+        }
+
+        const failureKey = getFaceFailureKey(status);
+        const storageKey = `faceUnlockModal:${failureKey}`;
+        if (sessionStorage.getItem(storageKey)) {
+            return;
+        }
+
+        faceUnlockModal = faceUnlockModal || new bootstrap.Modal(faceUnlockModalElement);
+        faceUnlockModal.show();
+        sessionStorage.setItem(storageKey, "shown");
+    };
+
     const renderFaceAlert = (status) => {
         if (!faceAlert) {
             return;
         }
 
-        faceAlert.classList.toggle("d-none", !status.unlock_required);
+        faceAlert.classList.toggle("d-none", !(status.unlock_required && faceUnlockEventVisible));
         if (faceAlertMessage) {
             faceAlertMessage.textContent = status.notification_title + ", " + status.notification_body;
+        }
+        if (faceUnlockModalMessage) {
+            faceUnlockModalMessage.textContent = status.notification_title + ", " + status.notification_body;
         }
     };
 
@@ -270,8 +319,13 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
             const status = await response.json();
+            const shouldReveal = shouldRevealFaceUnlock(status);
+            if (shouldReveal) {
+                faceUnlockEventVisible = true;
+                showFaceUnlockModal(status);
+            }
             renderFaceAlert(status);
-            if (status.unlock_required) {
+            if (shouldReveal) {
                 await showFaceFailureNotification(status);
             }
         } catch (error) {
@@ -327,6 +381,84 @@ document.addEventListener("DOMContentLoaded", function () {
             window.setInterval(checkFaceUnlockStatus, 15000);
         }
     });
+
+    const enrollmentRoot = document.querySelector("[data-face-enrollment-status-url]");
+    if (enrollmentRoot) {
+        const statusUrl = enrollmentRoot.dataset.faceEnrollmentStatusUrl;
+        const statusBadge = document.querySelector("[data-face-enrollment-status]");
+        const title = document.querySelector("[data-face-enrollment-title]");
+        const message = document.querySelector("[data-face-enrollment-message]");
+        const progress = document.querySelector("[data-face-enrollment-progress]");
+        const count = document.querySelector("[data-face-enrollment-count]");
+        const photoWrap = document.querySelector("[data-face-enrollment-photo-wrap]");
+        const photo = document.querySelector("[data-face-enrollment-photo]");
+
+        const titleByStatus = {
+            pending: "Waiting for ESP32",
+            started: "ESP32 is enrolling your face",
+            completed: "Face enrollment complete",
+            failed: "Face enrollment failed",
+            expired: "Enrollment request expired",
+        };
+
+        const renderEnrollment = (data) => {
+            const status = data.status || "pending";
+            const requested = Math.max(Number(data.requested_samples || 1), 1);
+            const captured = Math.max(Number(data.captured_samples || 0), 0);
+            const percent = Math.min(100, Math.round((captured / requested) * 100));
+
+            if (statusBadge) {
+                statusBadge.textContent = status;
+                statusBadge.dataset.status = status;
+            }
+            if (title) {
+                title.textContent = titleByStatus[status] || "Face enrollment";
+            }
+            if (message) {
+                message.textContent = data.message || "Keep your face centered and rotate the camera angle slowly.";
+            }
+            if (progress) {
+                progress.style.width = `${percent}%`;
+            }
+            if (count) {
+                count.textContent = `${captured} / ${requested} samples`;
+            }
+            if (photoWrap && photo && data.photo_url) {
+                photo.src = `${data.photo_url}?t=${encodeURIComponent(data.updated_at || Date.now())}`;
+                photoWrap.classList.remove("d-none");
+            }
+
+            return status === "completed" || status === "failed" || status === "expired";
+        };
+
+        const pollEnrollment = async () => {
+            try {
+                const response = await fetch(statusUrl, {
+                    credentials: "same-origin",
+                    headers: { Accept: "application/json" },
+                });
+                if (!response.ok) {
+                    return false;
+                }
+
+                const data = await response.json();
+                return renderEnrollment(data);
+            } catch (error) {
+                console.warn("Face enrollment status check failed", error);
+                return false;
+            }
+        };
+
+        pollEnrollment().then((isDone) => {
+            if (!isDone) {
+                const timer = window.setInterval(async () => {
+                    if (await pollEnrollment()) {
+                        window.clearInterval(timer);
+                    }
+                }, 2500);
+            }
+        });
+    }
 
     console.log("Pill box V2.01 page loaded");
 });

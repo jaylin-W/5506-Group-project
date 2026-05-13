@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Face Enrollment - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="face-enrollment-hero" data-face-enrollment-status-url="{{ url_for('face_enrollment_status', session_id=enrollment.id) }}">
+    <div class="face-enrollment-hero-copy">
+        <span class="section-kicker">Face Recognition Enrollment</span>
+        <h1>Position your face for the pill box camera</h1>
+        <p>Keep the product powered on. Slowly rotate the camera angle and keep your face centered until the enrollment completes.</p>
+    </div>
+
+    <div class="face-enrollment-status-card">
+        <span class="face-enrollment-status" data-face-enrollment-status>{{ enrollment.status }}</span>
+        <h2 data-face-enrollment-title>Waiting for ESP32</h2>
+        <p data-face-enrollment-message>{{ enrollment.message or "The ESP32 will pick up this request automatically." }}</p>
+
+        <div class="face-enrollment-meter">
+            <div data-face-enrollment-progress style="width: 0%;"></div>
+        </div>
+        <p class="face-enrollment-count" data-face-enrollment-count>{{ enrollment.captured_samples }} / {{ enrollment.requested_samples }} samples</p>
+    </div>
+</section>
+
+<section class="section-block face-enrollment-steps">
+    <div>
+        <h2 class="section-title">During Enrollment</h2>
+        <p>Stay near the pill box and move slowly. The first enrollment gives the user enough time to capture several face samples.</p>
+    </div>
+    <div class="face-enrollment-step-grid">
+        <div>
+            <strong>1</strong>
+            <span>Face the camera directly.</span>
+        </div>
+        <div>
+            <strong>2</strong>
+            <span>Turn the product slightly left and right.</span>
+        </div>
+        <div>
+            <strong>3</strong>
+            <span>Wait for the success status and saved photo.</span>
+        </div>
+    </div>
+</section>
+
+<section class="section-block face-enrollment-photo d-none" data-face-enrollment-photo-wrap>
+    <h2 class="section-title">Saved Enrollment Photo</h2>
+    <img src="" alt="Saved face enrollment preview" data-face-enrollment-photo>
+</section>
+{% endblock %}
