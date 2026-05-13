@@ -118,9 +118,9 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
 
-        notificationButtons.forEach((button) => {
-            button.classList.toggle("d-none", Notification.permission === "granted");
-        });
+        if (Notification.permission === "granted") {
+            setNotificationStatus("Notification permission granted. Tap Enable Phone Alerts to save or refresh this device.");
+        }
     };
 
     const requestNotificationPermission = async () => {
@@ -172,14 +172,21 @@ document.addEventListener("DOMContentLoaded", function () {
             });
         }
 
-        await fetch("/api/push/subscribe", {
+        const saveResponse = await fetch("/api/push/subscribe", {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(subscription),
         });
 
-        setNotificationStatus("Push subscription saved. Server can now notify this device.");
+        if (!saveResponse.ok) {
+            setNotificationStatus("Push subscription could not be saved.");
+            return null;
+        }
+
+        const saveData = await saveResponse.json();
+        const deviceCount = saveData.subscriptions || 1;
+        setNotificationStatus(`Push subscription saved. Subscribed devices: ${deviceCount}.`);
         return subscription;
     };
 
@@ -209,6 +216,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const options = {
             body: status.notification_body,
+            icon: "/static/images/promo_multivitamin.png",
+            badge: "/static/images/promo_multivitamin.png",
             tag: "face-unlock-required",
             requireInteraction: true,
             vibrate: [100, 50, 100],
@@ -276,19 +285,25 @@ document.addEventListener("DOMContentLoaded", function () {
 
     testNotificationButtons.forEach((button) => {
         button.addEventListener("click", async () => {
-            const subscription = await subscribeToPushMessages();
-            if (!subscription) {
-                return;
-            }
-
             const response = await fetch("/api/push/test", {
                 method: "POST",
                 credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
             });
+
+            if (!response.ok) {
+                setNotificationStatus("Please log in before sending a test notification.");
+                return;
+            }
+
             const result = await response.json();
             if (result.configured && result.sent > 0) {
-                setNotificationStatus("Server push sent. You can close the app and trigger again.");
+                setNotificationStatus(`Server push sent to ${result.sent} subscribed device(s).`);
+                return;
+            }
+
+            if (result.configured && result.subscriptions === 0) {
+                setNotificationStatus("No phone subscription yet. Open the HTTPS link on your phone and tap Enable Phone Alerts first.");
                 return;
             }
 

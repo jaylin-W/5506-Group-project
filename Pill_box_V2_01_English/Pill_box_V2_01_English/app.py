@@ -594,14 +594,25 @@ def get_push_subscriptions(user_id):
     return rows
 
 
+def count_push_subscriptions(user_id):
+    conn = get_db_connection()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM push_subscription WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()[0]
+    conn.close()
+    return count
+
+
 def can_send_web_push():
     return bool(webpush and app.config["VAPID_PUBLIC_KEY"] and app.config["VAPID_PRIVATE_KEY"])
 
 
 def send_web_push_notification(user_id, status):
+    subscriptions = get_push_subscriptions(user_id)
     if not can_send_web_push():
         logger.info("Web Push skipped: pywebpush or VAPID keys are not configured.")
-        return {"sent": 0, "configured": False}
+        return {"sent": 0, "configured": False, "subscriptions": len(subscriptions)}
 
     payload = json.dumps(
         {
@@ -614,7 +625,7 @@ def send_web_push_notification(user_id, status):
     )
     sent_count = 0
 
-    for row in get_push_subscriptions(user_id):
+    for row in subscriptions:
         try:
             webpush(
                 subscription_info=json.loads(row["subscription_json"]),
@@ -631,7 +642,7 @@ def send_web_push_notification(user_id, status):
             logger.warning(f"Invalid stored push subscription: {e}")
             delete_push_subscription(row["endpoint"])
 
-    return {"sent": sent_count, "configured": True}
+    return {"sent": sent_count, "configured": True, "subscriptions": len(subscriptions)}
 
 
 def is_safe_url(target):
@@ -902,7 +913,7 @@ def push_subscribe():
     saved, error = save_push_subscription(current_user.id, subscription)
     if not saved:
         return jsonify({"error": error}), 400
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "subscriptions": count_push_subscriptions(current_user.id)})
 
 
 @app.route("/api/push/test", methods=["POST"])

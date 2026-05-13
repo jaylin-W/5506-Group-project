@@ -25,6 +25,8 @@ self.addEventListener("push", (event) => {
 
     const options = {
         body: data.body || fallback.body,
+        icon: "/static/images/promo_multivitamin.png",
+        badge: "/static/images/promo_multivitamin.png",
         tag: "face-unlock-required",
         requireInteraction: data.interaction !== false,
         vibrate: [100, 50, 100],
