@@ -5,55 +5,134 @@
 {% block content %}
 <section class="page-header">
     <h1>Profile</h1>
-    <p>Welcome, {{ current_user.username }}. You can manage basic health information and add supplement schedules here.</p>
+    <p>Welcome, {{ current_user.username }}. You can manage health information, pill box security, product binding, and supplement schedules here.</p>
 </section>
 
-<div class="row g-4">
-    <div class="col-lg-5">
-        <div class="card shadow-sm h-100">
-            <div class="card-body">
-                <h4 class="card-title">Account Information</h4>
-                <p><strong>Username：</strong>{{ current_user.username }}</p>
-                <p><strong>Email：</strong>{{ current_user.email }}</p>
-                <p><strong>Age:</strong>{{ current_user.age or "Not provided" }}</p>
-                <p><strong>Health Goal:</strong>{{ current_user.health_goal or "Not provided" }}</p>
+<section class="account-panel card shadow-sm">
+    <div class="card-body">
+        <div class="account-panel-header">
+            <h4 class="card-title mb-0">Account Information</h4>
+            <button type="button" class="icon-button" data-profile-edit-toggle aria-label="Edit account information" title="Edit account information">&#9881;</button>
+        </div>
+
+        <div class="account-info-grid" data-profile-summary>
+            <div class="account-info-item">
+                <span class="account-info-label">Username</span>
+                <span class="account-info-value">{{ current_user.username }}</span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Email</span>
+                <span class="account-info-value">{{ current_user.email }}</span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Login Password</span>
+                <span class="password-line">
+                    <span class="password-secret" data-password-mask="********" data-password-message="Password is saved securely. Use the gear to set a new one.">********</span>
+                    <button type="button" class="icon-button eye-button" data-password-reveal aria-label="Show login password status" title="Show password status">
+                        <span class="eye-icon" aria-hidden="true"></span>
+                    </button>
+                </span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Pill Box Unlock Password</span>
+                <span class="password-line">
+                    <span class="password-secret" data-password-mask="********" data-password-message="Pill box unlock password is saved securely. Use the gear to set a new one.">********</span>
+                    <button type="button" class="icon-button eye-button" data-password-reveal aria-label="Show pill box unlock password status" title="Show password status">
+                        <span class="eye-icon" aria-hidden="true"></span>
+                    </button>
+                </span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Age</span>
+                <span class="account-info-value">{{ current_user.age or "Not provided" }}</span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Health Goal</span>
+                <span class="account-info-value">{{ current_user.health_goal or "Not provided" }}</span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Security Question</span>
+                <span class="account-info-value">{{ security_question_text or "Not set" }}</span>
+            </div>
+            <div class="account-info-item">
+                <span class="account-info-label">Product Unlock Code</span>
+                <span class="account-info-value">{{ current_user.product_code or "Not linked" }}</span>
             </div>
         </div>
-    </div>
 
-    <div class="col-lg-7">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h4 class="card-title">Edit Profile</h4>
-                <form method="post">
-                    <input type="hidden" name="form_type" value="profile">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="post" class="account-edit-form d-none" data-profile-editor>
+            <input type="hidden" name="form_type" value="profile">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-                    <div class="mb-3">
-                        <label class="form-label">Age</label>
-                        <input type="number" name="age" class="form-control" value="{{ current_user.age or '' }}" min="1" max="120">
-                    </div>
+            <div class="account-edit-grid">
+                <div class="mb-3">
+                    <label class="form-label">Age</label>
+                    <input type="number" name="age" class="form-control" value="{{ current_user.age or '' }}" min="1" max="120">
+                </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">Health Goal</label>
-                        <textarea name="health_goal" class="form-control" rows="4" placeholder="Example: take vitamins regularly, improve sleep quality, support immunity, etc.">{{ current_user.health_goal or '' }}</textarea>
-                    </div>
+                <div class="mb-3">
+                    <label class="form-label">Product Unlock Code</label>
+                    <input type="text" name="product_code" class="form-control" value="{{ current_user.product_code or '' }}" placeholder="{{ default_product_code }}">
+                    <div class="form-text">Example format: {{ product_code_example }}. Your product code: {{ default_product_code }}.</div>
+                </div>
 
-                    <button type="submit" class="btn btn-primary">Save Profile</button>
-                </form>
+                <div class="mb-3 account-edit-wide">
+                    <label class="form-label">Health Goal</label>
+                    <textarea name="health_goal" class="form-control" rows="4" placeholder="Example: take vitamins regularly, improve sleep quality, support immunity, etc.">{{ current_user.health_goal or '' }}</textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Security Question</label>
+                    <select name="security_question" class="form-select" required>
+                        <option value="">Please select</option>
+                        {% for key, label in security_questions %}
+                            <option value="{{ key }}" {% if current_user.security_question == key %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Security Answer</label>
+                    <input type="text" name="security_answer" class="form-control" placeholder="Leave blank to keep the current answer">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">New Login Password</label>
+                    <input type="password" name="login_password" class="form-control" placeholder="Leave blank to keep current password">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Confirm New Login Password</label>
+                    <input type="password" name="confirm_login_password" class="form-control" placeholder="Optional confirmation">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">New Pill Box Unlock Password</label>
+                    <input type="password" name="unlock_password" class="form-control" placeholder="Leave blank to keep current password">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Confirm New Unlock Password</label>
+                    <input type="password" name="confirm_unlock_password" class="form-control" placeholder="Optional confirmation">
+                </div>
             </div>
-        </div>
+
+            <div class="account-edit-actions">
+                <button type="submit" class="btn btn-primary">Save Profile</button>
+                <button type="button" class="btn btn-outline-secondary" data-profile-edit-cancel>Cancel</button>
+            </div>
+        </form>
     </div>
-</div>
+</section>
 
 <section id="features" class="section-block mt-4">
     <h2 class="section-title">Add Supplement Schedule</h2>
 
-    <form method="post" class="row g-3 align-items-end">
+    <form method="post" class="row g-3 align-items-start schedule-form">
         <input type="hidden" name="form_type" value="schedule">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-        <div class="col-md-3">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Select Supplement / Pill</label>
             <select name="supplement_name" class="form-select" required>
                 <option value="">Please select</option>
@@ -63,7 +142,7 @@
             </select>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Select Intake Time</label>
             <select name="take_time" class="form-select" required>
                 <option value="">Please select</option>
@@ -74,18 +153,18 @@
             <div class="form-text">Time options are spaced every 30 minutes, such as 11:00, 11:30, 12:00, and 12:30.</div>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Select Allowed Time Window</label>
             <select name="time_window" class="form-select" required>
                 <option value="">Please select</option>
                 {% for item in window_options %}
-                    <option value="{{ item }}">±{{ item }} minutes</option>
+                    <option value="{{ item }}">+/-{{ item }} minutes</option>
                 {% endfor %}
             </select>
-            <div class="form-text">Window options are spaced every 5 minutes, such as ±5、±10、±15。</div>
+            <div class="form-text">Window options are spaced every 5 minutes, such as +/-5, +/-10, and +/-15.</div>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Note</label>
             <input type="text" name="note" class="form-control" placeholder="Example: take after meals">
         </div>
@@ -117,12 +196,12 @@
                         <tr>
                             <td>{{ item.supplement_name }}</td>
                             <td>{{ item.take_time }}</td>
-                            <td>±{{ item.time_window }} minutes</td>
+                            <td>+/-{{ item.time_window }} minutes</td>
                             <td>{{ item.note or "None" }}</td>
                             <td>{{ item.created_at }}</td>
                             <td>
                                 <form method="post" action="{{ url_for('delete_schedule', schedule_id=item.id) }}" onsubmit="return confirm('Are you sure you want to delete this schedule?');" style="display:inline;">
-                                    {{ csrf_token() }}
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
                                 </form>
                             </td>

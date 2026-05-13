@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Unlock Pill Box - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>请输入密码解锁药盒</h1>
+    <p>
+        Face recognition failed {{ face_status.failed_attempts }} / {{ face_status.failure_threshold }} times.
+        Enter your pill box unlock password to clear the unlock alert.
+    </p>
+</section>
+
+<div class="form-page">
+    <div class="card form-card shadow-sm">
+        <div class="card-body">
+            <h2 class="mb-4 text-center">Pill Box Unlock</h2>
+
+            <form method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-3">
+                    <label class="form-label">Pill Box Unlock Password</label>
+                    <input type="password" name="unlock_password" class="form-control" placeholder="Enter your pill box unlock password" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">Unlock Pill Box</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

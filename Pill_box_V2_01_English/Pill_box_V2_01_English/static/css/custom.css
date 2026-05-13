@@ -190,6 +190,201 @@ body {
     color: #17385d;
 }
 
+.account-panel {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 18px;
+    margin-bottom: 28px;
+}
+
+.account-panel-header {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.icon-button {
+    align-items: center;
+    background: #f6f9ff;
+    border: 1px solid #d9e4f5;
+    border-radius: 8px;
+    color: #31527c;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 1rem;
+    height: 34px;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
+    width: 34px;
+}
+
+.icon-button:hover {
+    background: #eaf1ff;
+    color: #2646b6;
+}
+
+.account-info-grid,
+.account-edit-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.account-info-item {
+    background: #f8fbff;
+    border: 1px solid #e4edf8;
+    border-radius: 8px;
+    min-height: 86px;
+    padding: 14px;
+}
+
+.account-info-label {
+    color: #62748d;
+    display: block;
+    font-size: 0.86rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.account-info-value,
+.password-secret {
+    color: #1d2d44;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.password-line {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+}
+
+.eye-button {
+    height: 30px;
+    width: 30px;
+}
+
+.eye-icon {
+    border: 2px solid currentColor;
+    border-radius: 50% / 60%;
+    display: inline-block;
+    height: 11px;
+    position: relative;
+    width: 18px;
+}
+
+.eye-icon::after {
+    background: currentColor;
+    border-radius: 50%;
+    content: "";
+    height: 5px;
+    left: 50%;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 5px;
+}
+
+.account-edit-form {
+    border-top: 1px solid #e5edf7;
+    padding-top: 18px;
+}
+
+.account-edit-wide {
+    grid-column: 1 / -1;
+}
+
+.account-edit-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.phone-alert-setup {
+    align-items: center;
+    background: #eef7f4;
+    border: 1px solid #b8ddd4;
+    border-radius: 8px;
+    color: #123f35;
+    display: flex;
+    gap: 14px;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    padding: 12px 14px;
+}
+
+.phone-alert-copy {
+    display: grid;
+    gap: 2px;
+}
+
+.phone-alert-copy strong {
+    font-size: 0.95rem;
+}
+
+.phone-alert-copy span {
+    color: #3b6d62;
+    font-size: 0.84rem;
+}
+
+.phone-alert-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.face-unlock-alert {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #fff4e6;
+    border: 1px solid #ffbf69;
+    border-left: 5px solid #ff8a00;
+    border-radius: 12px;
+    color: #4d2c00;
+    margin-bottom: 18px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 24px rgba(255, 138, 0, 0.12);
+}
+
+.face-unlock-alert-title {
+    color: #9a4f00;
+    font-weight: 800;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.face-unlock-alert-title:hover {
+    color: #6f3900;
+    text-decoration: underline;
+}
+
+.face-notification-status {
+    color: #6f3900;
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.schedule-form .form-label {
+    align-items: flex-end;
+    display: flex;
+    min-height: 48px;
+}
+
+.schedule-form .form-select,
+.schedule-form .form-control {
+    min-height: 48px;
+}
+
+.schedule-form .form-text {
+    min-height: 42px;
+}
+
 .feature-card {
     border: 1px solid rgba(205, 221, 244, 0.9);
     border-radius: 20px;
@@ -238,7 +433,7 @@ body {
 
 .form-card {
     width: 100%;
-    max-width: 500px;
+    max-width: 640px;
     border: none;
     border-radius: 22px;
     background: rgba(255,255,255,0.94);
@@ -307,5 +502,32 @@ body {
 
     .promo-banner {
         min-height: 360px;
+    }
+
+    .phone-alert-setup,
+    .face-unlock-alert {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .phone-alert-actions {
+        justify-content: flex-start;
+    }
+
+    .face-unlock-alert-title {
+        white-space: normal;
+    }
+
+    .account-info-grid,
+    .account-edit-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .account-edit-actions {
+        flex-direction: column;
+    }
+
+    .schedule-form .form-label {
+        min-height: 0;
     }
 }
