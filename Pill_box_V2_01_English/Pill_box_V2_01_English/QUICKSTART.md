@@ -14,6 +14,10 @@ This is the English version of **Pill box V2.01**.
 - Advertisement cards have no buttons and no redirects
 - Hidden editor page for editing website text content
 - Advertisement card text can also be edited from the hidden editor page
+- Persistent SQLite storage at the project-level `instance/app.db`
+- Face recognition failure alert with password unlock page and PWA notification support
+- Registration now collects a separate pill box unlock password and a simple security question
+- Profile page supports updating the security question, pill box unlock password, and product unlock code
 
 ## Run the Project
 
@@ -53,10 +57,16 @@ EDITOR_ROUTE=your-hidden-editor-route
 
 ## Database
 
-The SQLite database is created automatically at:
+The SQLite database is created automatically at the project root:
 
 ```text
 instance/app.db
+```
+
+You can override the location with:
+
+```text
+DATABASE_PATH=instance/app.db
 ```
 
 Main tables:
@@ -66,6 +76,26 @@ user
 content_block
 supplement_schedule
 ```
+
+The demo product unlock code format is:
+
+```text
+5506xxx
+```
+
+The current demo product code is:
+
+```text
+5506123
+```
+
+For future pill box hardware integration, POST a face recognition failure to:
+
+```text
+/api/face-unlock/failure
+```
+
+If `DEVICE_API_TOKEN` is set, include it as `X-Device-Token` and send `username` or `user_id` in the JSON body.
 
 ## Do Not Upload These to GitHub
 

@@ -30,6 +30,31 @@
                     <input type="password" name="confirm_password" class="form-control" placeholder="Confirm password" required>
                 </div>
 
+                <div class="mb-3">
+                    <label class="form-label">Pill Box Unlock Password</label>
+                    <input type="password" name="unlock_password" class="form-control" placeholder="At least 4 characters" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Confirm Pill Box Unlock Password</label>
+                    <input type="password" name="confirm_unlock_password" class="form-control" placeholder="Confirm pill box unlock password" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Security Question</label>
+                    <select name="security_question" class="form-select" required>
+                        <option value="">Please select</option>
+                        {% for key, label in security_questions %}
+                            <option value="{{ key }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Security Answer</label>
+                    <input type="text" name="security_answer" class="form-control" placeholder="Enter your answer" required>
+                </div>
+
                 <button type="submit" class="btn btn-primary w-100">Register</button>
             </form>
 

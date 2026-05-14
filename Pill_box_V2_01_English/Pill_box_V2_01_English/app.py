@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, flash, request, session
+from flask import Flask, render_template, redirect, url_for, flash, request, session, jsonify, send_from_directory, send_file
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -13,14 +13,24 @@ from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from email_validator import validate_email, EmailNotValidError
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
+from io import BytesIO
 import sqlite3
 import os
 import re
+import random
+import json
 import logging
 from urllib.parse import urlparse, urljoin
 
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:
+    WebPushException = None
+    webpush = None
+
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 app = Flask(__name__)
 
@@ -30,6 +40,18 @@ app.config["HOST_PASSWORD"] = os.environ.get("HOST_PASSWORD", "admin123")
 app.config["EDITOR_ROUTE"] = os.environ.get("EDITOR_ROUTE", "pillbox-v2-editor-201")
 app.config["PROJECT_NAME"] = "Pill box V2"
 app.config["PROJECT_VERSION"] = "2.01"
+try:
+    FACE_FAILURE_THRESHOLD = max(1, int(os.environ.get("FACE_FAILURE_THRESHOLD", "3")))
+except ValueError:
+    FACE_FAILURE_THRESHOLD = 3
+app.config["FACE_FAILURE_THRESHOLD"] = FACE_FAILURE_THRESHOLD
+app.config["DEVICE_API_TOKEN"] = os.environ.get("DEVICE_API_TOKEN")
+app.config["VAPID_PUBLIC_KEY"] = os.environ.get("VAPID_PUBLIC_KEY")
+app.config["VAPID_PRIVATE_KEY"] = os.environ.get("VAPID_PRIVATE_KEY")
+app.config["VAPID_CLAIMS_SUB"] = os.environ.get("VAPID_CLAIMS_SUB", "mailto:admin@example.com")
+app.config["FACE_ENROLLMENT_REQUESTED_SAMPLES"] = 3
+app.config["FACE_ENROLLMENT_WINDOW_MINUTES"] = 5
+app.config["FACE_ENROLLMENT_MAX_PHOTO_BYTES"] = 700 * 1024
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,10 +66,17 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"]
 )
 
-INSTANCE_PATH = Path(app.instance_path)
+APP_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_ROOT.parents[1]
+INSTANCE_PATH = PROJECT_ROOT / "instance"
 INSTANCE_PATH.mkdir(parents=True, exist_ok=True)
 DATABASE_ENV = os.environ.get("DATABASE_PATH")
-DATABASE = Path(DATABASE_ENV) if DATABASE_ENV else INSTANCE_PATH / "app.db"
+if DATABASE_ENV:
+    configured_database = Path(DATABASE_ENV).expanduser()
+    DATABASE = configured_database if configured_database.is_absolute() else PROJECT_ROOT / configured_database
+else:
+    DATABASE = INSTANCE_PATH / "app.db"
+DATABASE.parent.mkdir(parents=True, exist_ok=True)
 
 SUPPLEMENT_OPTIONS = [
     "Fish Oil",
@@ -75,6 +104,18 @@ TIME_OPTIONS = [
 ]
 
 WINDOW_OPTIONS = list(range(5, 65, 5))
+
+PRODUCT_CODE_EXAMPLE = "5506xxx"
+DEFAULT_PRODUCT_CODE = "5506123"
+
+SECURITY_QUESTIONS = [
+    ("math_1_plus_1", "1 + 1 = ?"),
+    ("math_2_plus_3", "2 + 3 = ?"),
+    ("math_5_minus_2", "5 - 2 = ?"),
+    ("math_3_times_2", "3 x 2 = ?"),
+    ("math_10_divide_2", "10 / 2 = ?"),
+]
+SECURITY_QUESTION_LABELS = dict(SECURITY_QUESTIONS)
 
 PROMO_AD_IMAGES = [
     "promo_vitamin_c.png",
@@ -153,6 +194,47 @@ def validate_password(password):
     return True, None
 
 
+def validate_unlock_password(password):
+    if len(password) < 4:
+        return False, "Pill box unlock password must be at least 4 characters long."
+    return True, None
+
+
+def normalize_security_answer(answer):
+    return " ".join(answer.strip().lower().split())
+
+
+def validate_security_question(question_key):
+    if question_key not in SECURITY_QUESTION_LABELS:
+        return False, "Please select a valid security question."
+    return True, None
+
+
+def validate_security_answer(answer):
+    normalized_answer = normalize_security_answer(answer)
+    if not normalized_answer:
+        return False, "Please enter the answer to your security question."
+    if len(normalized_answer) > 100:
+        return False, "Security answer must be 100 characters or fewer."
+    return True, normalized_answer
+
+
+def validate_product_code(product_code):
+    normalized_code = product_code.strip().upper()
+    if not normalized_code:
+        return True, None
+    if not re.match(r"^5506[A-Z0-9]{3}$", normalized_code):
+        return False, f"Product unlock code must match the format {PRODUCT_CODE_EXAMPLE}, for example {DEFAULT_PRODUCT_CODE}."
+    return True, normalized_code
+
+
+def get_security_questions(randomize=False):
+    questions = SECURITY_QUESTIONS.copy()
+    if randomize:
+        random.shuffle(questions)
+    return questions
+
+
 def validate_age(age_str):
     if not age_str or age_str.strip() == "":
         return True, None
@@ -165,6 +247,12 @@ def validate_age(age_str):
         return False, "Age must be a number."
 
 
+def ensure_column(conn, table_name, column_name, column_sql):
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_sql}")
+
+
 def init_db():
     conn = get_db_connection()
     conn.execute(
@@ -174,9 +262,32 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
+            unlock_password_hash TEXT,
+            security_question TEXT,
+            security_answer_hash TEXT,
+            product_code TEXT,
             age INTEGER,
-            health_goal TEXT
+            health_goal TEXT,
+            face_failed_attempts INTEGER NOT NULL DEFAULT 0,
+            unlock_required INTEGER NOT NULL DEFAULT 0,
+            last_face_failure_at TEXT,
+            last_unlock_at TEXT
         )
+        """
+    )
+    ensure_column(conn, "user", "unlock_password_hash", "unlock_password_hash TEXT")
+    ensure_column(conn, "user", "security_question", "security_question TEXT")
+    ensure_column(conn, "user", "security_answer_hash", "security_answer_hash TEXT")
+    ensure_column(conn, "user", "product_code", "product_code TEXT")
+    ensure_column(conn, "user", "face_failed_attempts", "face_failed_attempts INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "user", "unlock_required", "unlock_required INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "user", "last_face_failure_at", "last_face_failure_at TEXT")
+    ensure_column(conn, "user", "last_unlock_at", "last_unlock_at TEXT")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_product_code
+        ON user(product_code)
+        WHERE product_code IS NOT NULL
         """
     )
     conn.execute(
@@ -202,6 +313,41 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS push_subscription (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            endpoint TEXT UNIQUE NOT NULL,
+            subscription_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES user(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS face_enrollment_session (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            product_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            person_name TEXT NOT NULL,
+            requested_samples INTEGER NOT NULL DEFAULT 3,
+            captured_samples INTEGER NOT NULL DEFAULT 0,
+            message TEXT,
+            device_id TEXT,
+            photo_mime TEXT,
+            photo_data BLOB,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            completed_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES user(id)
+        )
+        """
+    )
     for key, value in DEFAULT_CONTENT_BLOCKS.items():
         conn.execute(
             "INSERT OR IGNORE INTO content_block (block_key, block_value) VALUES (?, ?)",
@@ -212,13 +358,37 @@ def init_db():
 
 
 class User(UserMixin):
-    def __init__(self, id, username, email, password_hash, age=None, health_goal=None):
+    def __init__(
+        self,
+        id,
+        username,
+        email,
+        password_hash,
+        age=None,
+        health_goal=None,
+        unlock_password_hash=None,
+        security_question=None,
+        security_answer_hash=None,
+        product_code=None,
+        face_failed_attempts=0,
+        unlock_required=0,
+        last_face_failure_at=None,
+        last_unlock_at=None,
+    ):
         self.id = id
         self.username = username
         self.email = email
         self.password_hash = password_hash
         self.age = age
         self.health_goal = health_goal
+        self.unlock_password_hash = unlock_password_hash
+        self.security_question = security_question
+        self.security_answer_hash = security_answer_hash
+        self.product_code = product_code
+        self.face_failed_attempts = face_failed_attempts or 0
+        self.unlock_required = bool(unlock_required)
+        self.last_face_failure_at = last_face_failure_at
+        self.last_unlock_at = last_unlock_at
 
     @staticmethod
     def from_row(row):
@@ -231,10 +401,23 @@ class User(UserMixin):
             password_hash=row["password_hash"],
             age=row["age"],
             health_goal=row["health_goal"],
+            unlock_password_hash=row["unlock_password_hash"],
+            security_question=row["security_question"],
+            security_answer_hash=row["security_answer_hash"],
+            product_code=row["product_code"],
+            face_failed_attempts=row["face_failed_attempts"],
+            unlock_required=row["unlock_required"],
+            last_face_failure_at=row["last_face_failure_at"],
+            last_unlock_at=row["last_unlock_at"],
         )
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    def check_unlock_password(self, password):
+        if self.unlock_password_hash:
+            return check_password_hash(self.unlock_password_hash, password)
+        return self.check_password(password)
 
 
 login_manager = LoginManager(app)
@@ -294,6 +477,426 @@ def get_user_schedules(user_id):
     return rows
 
 
+def utc_now_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def get_face_unlock_status(user_id):
+    conn = get_db_connection()
+    row = conn.execute(
+        """
+        SELECT face_failed_attempts, unlock_required, last_face_failure_at, last_unlock_at
+        FROM user
+        WHERE id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+    conn.close()
+
+    if row is None:
+        return None
+
+    failed_attempts = row["face_failed_attempts"] or 0
+    threshold = app.config["FACE_FAILURE_THRESHOLD"]
+    return {
+        "failed_attempts": failed_attempts,
+        "failure_threshold": threshold,
+        "unlock_required": bool(row["unlock_required"]) or failed_attempts >= threshold,
+        "last_face_failure_at": row["last_face_failure_at"],
+        "last_unlock_at": row["last_unlock_at"],
+        "notification_title": f"目前面部识别已失败{threshold}次",
+        "notification_body": "请进入网站，输入解锁密码。",
+        "page_alert_title": "请输入密码解锁药盒",
+    }
+
+
+def record_face_failure(user_id):
+    conn = get_db_connection()
+    should_notify = False
+    try:
+        row = conn.execute(
+            "SELECT face_failed_attempts, unlock_required FROM user WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        threshold = app.config["FACE_FAILURE_THRESHOLD"]
+        was_unlock_required = bool(row["unlock_required"])
+        failed_attempts = (row["face_failed_attempts"] or 0) + 1
+        unlock_required = 1 if failed_attempts >= threshold else row["unlock_required"]
+        should_notify = failed_attempts >= threshold and not was_unlock_required
+        conn.execute(
+            """
+            UPDATE user
+            SET face_failed_attempts = ?, unlock_required = ?, last_face_failure_at = ?
+            WHERE id = ?
+            """,
+            (failed_attempts, unlock_required, utc_now_iso(), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    status = get_face_unlock_status(user_id)
+    if status is not None:
+        status["should_notify"] = should_notify
+        status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
+    return status
+
+
+def reset_face_unlock_status(user_id):
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE user
+            SET face_failed_attempts = 0, unlock_required = 0, last_unlock_at = ?
+            WHERE id = ?
+            """,
+            (utc_now_iso(), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def find_user_id_from_payload(payload):
+    user_id = payload.get("user_id")
+    username = (payload.get("username") or "").strip()
+    product_code = (payload.get("product_code") or "").strip().upper()
+
+    conn = get_db_connection()
+    try:
+        if user_id:
+            row = conn.execute("SELECT id FROM user WHERE id = ?", (user_id,)).fetchone()
+        elif username:
+            row = conn.execute("SELECT id FROM user WHERE username = ?", (username,)).fetchone()
+        elif product_code:
+            row = conn.execute("SELECT id FROM user WHERE product_code = ?", (product_code,)).fetchone()
+        else:
+            row = None
+    finally:
+        conn.close()
+
+    return row["id"] if row else None
+
+
+def resolve_device_request_user(payload):
+    configured_token = app.config["DEVICE_API_TOKEN"]
+    provided_token = request.headers.get("X-Device-Token") or payload.get("device_token")
+
+    if configured_token:
+        if provided_token != configured_token:
+            return None, ("Invalid device token.", 403)
+
+        user_id = find_user_id_from_payload(payload)
+        if user_id is None and current_user.is_authenticated:
+            user_id = current_user.id
+    elif current_user.is_authenticated:
+        user_id = current_user.id
+    else:
+        return None, ("Login required or configure DEVICE_API_TOKEN for the pill box device.", 401)
+
+    if user_id is None:
+        return None, ("User not found. Send product_code, username, or user_id with the device request.", 404)
+
+    return user_id, None
+
+
+def get_device_payload():
+    payload = request.get_json(silent=True) or {}
+    if not payload:
+        payload = {}
+
+    product_code = request.headers.get("X-Product-Code") or request.args.get("product_code")
+    device_id = request.headers.get("X-Device-Id") or request.args.get("device_id")
+    if product_code and not payload.get("product_code"):
+        payload["product_code"] = product_code
+    if device_id and not payload.get("device_id"):
+        payload["device_id"] = device_id
+    return payload
+
+
+def create_face_enrollment_session(user):
+    now = utc_now_iso()
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=app.config["FACE_ENROLLMENT_WINDOW_MINUTES"])).replace(microsecond=0).isoformat()
+    person_name = re.sub(r"[^A-Za-z0-9_-]+", "_", user.username).strip("_") or f"user_{user.id}"
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET status = 'expired', updated_at = ?
+            WHERE user_id = ? AND status IN ('pending', 'started')
+            """,
+            (now, user.id),
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO face_enrollment_session
+            (user_id, product_code, status, person_name, requested_samples, captured_samples, created_at, updated_at, expires_at)
+            VALUES (?, ?, 'pending', ?, ?, 0, ?, ?, ?)
+            """,
+            (
+                user.id,
+                user.product_code,
+                person_name,
+                app.config["FACE_ENROLLMENT_REQUESTED_SAMPLES"],
+                now,
+                now,
+                expires_at,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_face_enrollment_session(session_id, user_id=None):
+    conn = get_db_connection()
+    try:
+        if user_id is None:
+            row = conn.execute(
+                "SELECT * FROM face_enrollment_session WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM face_enrollment_session WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
+            ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def serialize_face_enrollment_session(row):
+    has_photo = bool(row["photo_data"])
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "product_code": row["product_code"],
+        "person_name": row["person_name"],
+        "requested_samples": row["requested_samples"],
+        "captured_samples": row["captured_samples"],
+        "message": row["message"],
+        "device_id": row["device_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "expires_at": row["expires_at"],
+        "completed_at": row["completed_at"],
+        "has_photo": has_photo,
+        "photo_url": url_for("face_enrollment_photo", session_id=row["id"]) if has_photo else None,
+    }
+
+
+def get_active_face_enrollment_for_user(user_id):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM face_enrollment_session
+            WHERE user_id = ? AND status IN ('pending', 'started') AND expires_at > ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id, now),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def get_latest_face_enrollment_for_user(user_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM face_enrollment_session
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def mark_face_enrollment_started(row, device_id=None):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET status = 'started', device_id = COALESCE(?, device_id), updated_at = ?
+            WHERE id = ? AND status IN ('pending', 'started')
+            """,
+            (device_id, now, row["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_face_enrollment_result(session_id, user_id, status, captured_samples=0, message=None, device_id=None):
+    now = utc_now_iso()
+    completed_at = now if status in ("completed", "failed", "expired") else None
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET status = ?,
+                captured_samples = ?,
+                message = ?,
+                device_id = COALESCE(?, device_id),
+                updated_at = ?,
+                completed_at = COALESCE(?, completed_at)
+            WHERE id = ? AND user_id = ?
+            """,
+            (status, captured_samples, message, device_id, now, completed_at, session_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_face_enrollment_photo(session_id, user_id, photo_data, photo_mime, device_id=None):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE face_enrollment_session
+            SET photo_data = ?,
+                photo_mime = ?,
+                device_id = COALESCE(?, device_id),
+                updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (photo_data, photo_mime, device_id, now, session_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_push_subscription(user_id, subscription):
+    endpoint = subscription.get("endpoint")
+    if not endpoint:
+        return False, "Push subscription endpoint is missing."
+
+    subscription_json = json.dumps(subscription, separators=(",", ":"))
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO push_subscription (user_id, endpoint, subscription_json)
+            VALUES (?, ?, ?)
+            ON CONFLICT(endpoint) DO UPDATE SET
+                user_id = excluded.user_id,
+                subscription_json = excluded.subscription_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, endpoint, subscription_json),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return True, None
+
+
+def delete_push_subscription(endpoint):
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM push_subscription WHERE endpoint = ?", (endpoint,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_push_subscriptions(user_id):
+    conn = get_db_connection()
+    rows = conn.execute(
+        """
+        SELECT endpoint, subscription_json
+        FROM push_subscription
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def count_push_subscriptions(user_id):
+    conn = get_db_connection()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM push_subscription WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()[0]
+    conn.close()
+    return count
+
+
+def can_send_web_push():
+    return bool(webpush and app.config["VAPID_PUBLIC_KEY"] and app.config["VAPID_PRIVATE_KEY"])
+
+
+def send_web_push_notification(user_id, status):
+    subscriptions = get_push_subscriptions(user_id)
+    logger.info(
+        "Web Push requested for user_id=%s subscriptions=%s configured=%s",
+        user_id,
+        len(subscriptions),
+        can_send_web_push(),
+    )
+    if not can_send_web_push():
+        logger.info("Web Push skipped: pywebpush or VAPID keys are not configured.")
+        return {"sent": 0, "configured": False, "subscriptions": len(subscriptions)}
+
+    payload = json.dumps(
+        {
+            "title": status["notification_title"],
+            "body": status["notification_body"],
+            "url": url_for("unlock_pill_box"),
+            "interaction": True,
+        },
+        ensure_ascii=False,
+    )
+    sent_count = 0
+
+    for row in subscriptions:
+        try:
+            webpush(
+                subscription_info=json.loads(row["subscription_json"]),
+                data=payload,
+                vapid_private_key=app.config["VAPID_PRIVATE_KEY"],
+                vapid_claims={"sub": app.config["VAPID_CLAIMS_SUB"]},
+            )
+            sent_count += 1
+        except WebPushException as e:
+            logger.warning(f"Web Push failed for {row['endpoint']}: {e}")
+            if getattr(e, "response", None) and e.response.status_code in (404, 410):
+                delete_push_subscription(row["endpoint"])
+        except (ValueError, TypeError, json.JSONDecodeError) as e:
+            logger.warning(f"Invalid stored push subscription: {e}")
+            delete_push_subscription(row["endpoint"])
+
+    logger.info("Web Push completed for user_id=%s sent=%s subscriptions=%s", user_id, sent_count, len(subscriptions))
+    return {"sent": sent_count, "configured": True, "subscriptions": len(subscriptions)}
+
+
 def is_safe_url(target):
     ref_url = urlparse(request.host_url)
     test_url = urlparse(urljoin(request.host_url, target))
@@ -316,6 +919,14 @@ def index():
     blocks = get_content_blocks()
     promo_ads = get_promo_ads(blocks)
     return render_template("index.html", blocks=blocks, promo_ads=promo_ads)
+
+
+@app.route("/service-worker.js")
+def service_worker():
+    response = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.route("/about")
@@ -387,6 +998,10 @@ def register():
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
+        unlock_password = request.form.get("unlock_password", "")
+        confirm_unlock_password = request.form.get("confirm_unlock_password", "")
+        security_question = request.form.get("security_question", "").strip()
+        security_answer = request.form.get("security_answer", "")
 
         valid, msg = validate_username(username)
         if not valid:
@@ -412,6 +1027,29 @@ def register():
             flash("The two passwords do not match.", "danger")
             return redirect(url_for("register"))
 
+        if not unlock_password:
+            flash("Please enter a pill box unlock password.", "danger")
+            return redirect(url_for("register"))
+
+        valid, msg = validate_unlock_password(unlock_password)
+        if not valid:
+            flash(msg, "danger")
+            return redirect(url_for("register"))
+
+        if unlock_password != confirm_unlock_password:
+            flash("The two pill box unlock passwords do not match.", "danger")
+            return redirect(url_for("register"))
+
+        valid, msg = validate_security_question(security_question)
+        if not valid:
+            flash(msg, "danger")
+            return redirect(url_for("register"))
+
+        valid, security_answer_value = validate_security_answer(security_answer)
+        if not valid:
+            flash(security_answer_value, "danger")
+            return redirect(url_for("register"))
+
         conn = get_db_connection()
         existing_user = conn.execute(
             "SELECT * FROM user WHERE username = ? OR email = ?",
@@ -424,10 +1062,16 @@ def register():
             return redirect(url_for("register"))
 
         password_hash = generate_password_hash(password)
+        unlock_password_hash = generate_password_hash(unlock_password)
+        security_answer_hash = generate_password_hash(security_answer_value)
         try:
             conn.execute(
-                "INSERT INTO user (username, email, password_hash) VALUES (?, ?, ?)",
-                (username, email, password_hash),
+                """
+                INSERT INTO user
+                (username, email, password_hash, unlock_password_hash, security_question, security_answer_hash)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (username, email, password_hash, unlock_password_hash, security_question, security_answer_hash),
             )
             conn.commit()
             logger.info(f"New user registered: {username}")
@@ -441,7 +1085,7 @@ def register():
         flash("Registration successful. Please log in.", "success")
         return redirect(url_for("login"))
 
-    return render_template("register.html")
+    return render_template("register.html", security_questions=get_security_questions(randomize=True))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -493,6 +1137,273 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.route("/api/face-unlock/status")
+@limiter.limit("10000 per hour", override_defaults=True)
+@login_required
+def face_unlock_status():
+    status = get_face_unlock_status(current_user.id)
+    status["unlock_url"] = url_for("unlock_pill_box")
+    status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
+    return jsonify(status)
+
+
+@app.route("/api/push/public-key")
+@login_required
+def push_public_key():
+    return jsonify(
+        {
+            "publicKey": app.config["VAPID_PUBLIC_KEY"],
+            "configured": can_send_web_push(),
+            "pywebpushInstalled": webpush is not None,
+        }
+    )
+
+
+@app.route("/api/push/subscribe", methods=["POST"])
+@csrf.exempt
+@login_required
+def push_subscribe():
+    subscription = request.get_json(silent=True) or {}
+    saved, error = save_push_subscription(current_user.id, subscription)
+    if not saved:
+        return jsonify({"error": error}), 400
+    return jsonify({"ok": True, "subscriptions": count_push_subscriptions(current_user.id)})
+
+
+@app.route("/api/push/test", methods=["POST"])
+@csrf.exempt
+@login_required
+def push_test():
+    status = get_face_unlock_status(current_user.id)
+    status["unlock_url"] = url_for("unlock_pill_box")
+    result = send_web_push_notification(current_user.id, status)
+    return jsonify(result)
+
+
+@app.route("/api/face-unlock/failure", methods=["POST"])
+@csrf.exempt
+def report_face_unlock_failure():
+    payload = request.get_json(silent=True) or {}
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    status = record_face_failure(user_id)
+    if status is None:
+        return jsonify({"error": "User not found."}), 404
+
+    status["unlock_url"] = url_for("unlock_pill_box")
+    if status.get("should_notify"):
+        status["push"] = send_web_push_notification(user_id, status)
+    else:
+        status["push"] = {"sent": 0, "reason": "failure threshold not reached or already notified"}
+    logger.info(
+        "Face unlock failure reported: user_id=%s product_code=%s failed_attempts=%s unlock_required=%s push=%s",
+        user_id,
+        payload.get("product_code"),
+        status.get("failed_attempts"),
+        status.get("unlock_required"),
+        status.get("push"),
+    )
+    return jsonify(status)
+
+
+@app.route("/api/face-unlock/device-status", methods=["POST"])
+@csrf.exempt
+def face_unlock_device_status():
+    payload = request.get_json(silent=True) or {}
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    status = get_face_unlock_status(user_id)
+    if status is None:
+        return jsonify({"error": "User not found."}), 404
+
+    status["unlock_url"] = url_for("unlock_pill_box")
+    status["server_time"] = utc_now_iso()
+    status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
+    return jsonify(status)
+
+
+@app.route("/api/face-unlock/success", methods=["POST"])
+@csrf.exempt
+def report_face_unlock_success():
+    payload = request.get_json(silent=True) or {}
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    reset_face_unlock_status(user_id)
+    status = get_face_unlock_status(user_id)
+    status["unlock_url"] = url_for("unlock_pill_box")
+    status["device_action"] = "continue"
+    return jsonify(status)
+
+
+@app.route("/face-enrollment/start", methods=["POST"])
+@login_required
+def start_face_enrollment():
+    if not current_user.product_code:
+        flash("Please link your product unlock code before starting face enrollment.", "warning")
+        return redirect(url_for("profile"))
+
+    session_id = create_face_enrollment_session(current_user)
+    flash("Face enrollment request sent. Keep the pill box powered on and follow the camera instructions.", "success")
+    return redirect(url_for("face_enrollment_page", session_id=session_id))
+
+
+@app.route("/face-enrollment/<int:session_id>")
+@login_required
+def face_enrollment_page(session_id):
+    row = get_face_enrollment_session(session_id, current_user.id)
+    if row is None:
+        flash("Face enrollment session not found.", "danger")
+        return redirect(url_for("profile"))
+
+    return render_template(
+        "face_enrollment.html",
+        enrollment=serialize_face_enrollment_session(row),
+    )
+
+
+@app.route("/api/face-enrollment/<int:session_id>/status")
+@login_required
+def face_enrollment_status(session_id):
+    row = get_face_enrollment_session(session_id, current_user.id)
+    if row is None:
+        return jsonify({"error": "Face enrollment session not found."}), 404
+    return jsonify(serialize_face_enrollment_session(row))
+
+
+@app.route("/face-enrollment/<int:session_id>/photo")
+@login_required
+def face_enrollment_photo(session_id):
+    row = get_face_enrollment_session(session_id, current_user.id)
+    if row is None or not row["photo_data"]:
+        return jsonify({"error": "Face enrollment photo not found."}), 404
+
+    return send_file(
+        BytesIO(row["photo_data"]),
+        mimetype=row["photo_mime"] or "image/jpeg",
+        download_name=f"face-enrollment-{session_id}.jpg",
+    )
+
+
+@app.route("/api/face-enrollment/device-command", methods=["POST"])
+@csrf.exempt
+def face_enrollment_device_command():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    row = get_active_face_enrollment_for_user(user_id)
+    if row is None:
+        return jsonify({"command": "idle", "server_time": utc_now_iso()})
+
+    mark_face_enrollment_started(row, payload.get("device_id"))
+    return jsonify(
+        {
+            "command": "enroll",
+            "session_id": str(row["id"]),
+            "person_name": row["person_name"],
+            "requested_samples": row["requested_samples"],
+            "expires_at": row["expires_at"],
+            "server_time": utc_now_iso(),
+        }
+    )
+
+
+@app.route("/api/face-enrollment/device-result", methods=["POST"])
+@csrf.exempt
+def face_enrollment_device_result():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    try:
+        session_id = int(payload.get("session_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "session_id is required."}), 400
+
+    status = (payload.get("status") or "").strip().lower()
+    if status not in ("started", "completed", "failed", "expired"):
+        return jsonify({"error": "Invalid enrollment status."}), 400
+
+    captured_samples = payload.get("captured_samples") or 0
+    try:
+        captured_samples = max(0, int(captured_samples))
+    except (TypeError, ValueError):
+        captured_samples = 0
+
+    row = get_face_enrollment_session(session_id, user_id)
+    if row is None:
+        return jsonify({"error": "Face enrollment session not found."}), 404
+
+    update_face_enrollment_result(
+        session_id=session_id,
+        user_id=user_id,
+        status=status,
+        captured_samples=captured_samples,
+        message=(payload.get("message") or "").strip() or None,
+        device_id=payload.get("device_id"),
+    )
+    updated = get_face_enrollment_session(session_id, user_id)
+    return jsonify(serialize_face_enrollment_session(updated))
+
+
+@app.route("/api/face-enrollment/device-photo/<int:session_id>", methods=["POST"])
+@csrf.exempt
+def face_enrollment_device_photo(session_id):
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    row = get_face_enrollment_session(session_id, user_id)
+    if row is None:
+        return jsonify({"error": "Face enrollment session not found."}), 404
+
+    photo_data = request.get_data()
+    if not photo_data:
+        return jsonify({"error": "Photo body is empty."}), 400
+    if len(photo_data) > app.config["FACE_ENROLLMENT_MAX_PHOTO_BYTES"]:
+        return jsonify({"error": "Photo is too large."}), 413
+
+    photo_mime = request.headers.get("Content-Type") or "image/jpeg"
+    save_face_enrollment_photo(session_id, user_id, photo_data, photo_mime, payload.get("device_id"))
+    updated = get_face_enrollment_session(session_id, user_id)
+    return jsonify(serialize_face_enrollment_session(updated))
+
+
+@app.route("/unlock", methods=["GET", "POST"])
+@login_required
+@limiter.limit("10 per minute", methods=["POST"])
+def unlock_pill_box():
+    if request.method == "POST":
+        unlock_password = request.form.get("unlock_password", "")
+        if not current_user.check_unlock_password(unlock_password):
+            flash("Incorrect unlock password.", "danger")
+            return redirect(url_for("unlock_pill_box"))
+
+        reset_face_unlock_status(current_user.id)
+        current_user.face_failed_attempts = 0
+        current_user.unlock_required = False
+        flash("Pill box unlock confirmed. Face recognition alert has been cleared.", "success")
+        return redirect(url_for("profile"))
+
+    face_status = get_face_unlock_status(current_user.id)
+    return render_template("unlock.html", face_status=face_status)
+
+
 @app.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
@@ -502,19 +1413,103 @@ def profile():
         if form_type == "profile":
             age = request.form.get("age", "").strip()
             health_goal = request.form.get("health_goal", "").strip()
+            login_password = request.form.get("login_password", "")
+            confirm_login_password = request.form.get("confirm_login_password", "")
+            unlock_password = request.form.get("unlock_password", "")
+            confirm_unlock_password = request.form.get("confirm_unlock_password", "")
+            security_question = request.form.get("security_question", "").strip()
+            security_answer = request.form.get("security_answer", "")
+            product_code = request.form.get("product_code", "")
+            login_password_updated = False
+            unlock_password_updated = False
+
             valid, age_value = validate_age(age)
             if not valid:
                 flash(age_value, "danger")
                 return redirect(url_for("profile"))
+
+            password_hash = current_user.password_hash
+            if login_password:
+                valid, msg = validate_password(login_password)
+                if not valid:
+                    flash(msg, "danger")
+                    return redirect(url_for("profile"))
+                if confirm_login_password and login_password != confirm_login_password:
+                    flash("The two login passwords do not match.", "danger")
+                    return redirect(url_for("profile"))
+                password_hash = generate_password_hash(login_password)
+                login_password_updated = True
+            elif confirm_login_password:
+                flash("Please enter the new login password first.", "danger")
+                return redirect(url_for("profile"))
+
+            valid, msg = validate_security_question(security_question)
+            if not valid:
+                flash(msg, "danger")
+                return redirect(url_for("profile"))
+
+            security_answer_hash = current_user.security_answer_hash
+            if security_answer.strip():
+                valid, security_answer_value = validate_security_answer(security_answer)
+                if not valid:
+                    flash(security_answer_value, "danger")
+                    return redirect(url_for("profile"))
+                security_answer_hash = generate_password_hash(security_answer_value)
+            elif security_question != current_user.security_question:
+                flash("Please enter a new security answer when changing the security question.", "danger")
+                return redirect(url_for("profile"))
+
+            unlock_password_hash = current_user.unlock_password_hash
+            if unlock_password:
+                valid, msg = validate_unlock_password(unlock_password)
+                if not valid:
+                    flash(msg, "danger")
+                    return redirect(url_for("profile"))
+                if confirm_unlock_password and unlock_password != confirm_unlock_password:
+                    flash("The two pill box unlock passwords do not match.", "danger")
+                    return redirect(url_for("profile"))
+                unlock_password_hash = generate_password_hash(unlock_password)
+                unlock_password_updated = True
+            elif confirm_unlock_password:
+                flash("Please enter the new pill box unlock password first.", "danger")
+                return redirect(url_for("profile"))
+
+            valid, product_code_value = validate_product_code(product_code)
+            if not valid:
+                flash(product_code_value, "danger")
+                return redirect(url_for("profile"))
+
             health_goal_value = health_goal or None
             conn = get_db_connection()
             try:
                 conn.execute(
-                    "UPDATE user SET age = ?, health_goal = ? WHERE id = ?",
-                    (age_value, health_goal_value, current_user.id),
+                    """
+                    UPDATE user
+                    SET password_hash = ?,
+                        age = ?,
+                        health_goal = ?,
+                        unlock_password_hash = ?,
+                        security_question = ?,
+                        security_answer_hash = ?,
+                        product_code = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        password_hash,
+                        age_value,
+                        health_goal_value,
+                        unlock_password_hash,
+                        security_question,
+                        security_answer_hash,
+                        product_code_value,
+                        current_user.id,
+                    ),
                 )
                 conn.commit()
                 logger.info(f"User profile updated: {current_user.username}")
+            except sqlite3.IntegrityError:
+                flash("This product unlock code is already linked to another account.", "danger")
+                return redirect(url_for("profile"))
             except sqlite3.DatabaseError as e:
                 logger.error(f"Failed to update user profile: {e}")
                 flash("Update failed. Please try again later.", "danger")
@@ -522,9 +1517,19 @@ def profile():
             finally:
                 conn.close()
 
+            current_user.password_hash = password_hash
             current_user.age = age_value
             current_user.health_goal = health_goal_value
-            flash("Profile updated successfully.", "success")
+            current_user.unlock_password_hash = unlock_password_hash
+            current_user.security_question = security_question
+            current_user.security_answer_hash = security_answer_hash
+            current_user.product_code = product_code_value
+            success_message = "Profile updated successfully."
+            if login_password_updated:
+                success_message += " Login password updated."
+            if unlock_password_updated:
+                success_message += " Pill box unlock password updated."
+            flash(success_message, "success")
             return redirect(url_for("profile"))
 
         if form_type == "schedule":
@@ -571,12 +1576,18 @@ def profile():
             return redirect(url_for("profile"))
 
     schedules = get_user_schedules(current_user.id)
+    latest_face_enrollment = get_latest_face_enrollment_for_user(current_user.id)
     return render_template(
         "profile.html",
         supplement_options=SUPPLEMENT_OPTIONS,
         time_options=TIME_OPTIONS,
         window_options=WINDOW_OPTIONS,
         schedules=schedules,
+        security_questions=get_security_questions(),
+        security_question_text=SECURITY_QUESTION_LABELS.get(current_user.security_question),
+        product_code_example=PRODUCT_CODE_EXAMPLE,
+        default_product_code=DEFAULT_PRODUCT_CODE,
+        latest_face_enrollment=serialize_face_enrollment_session(latest_face_enrollment) if latest_face_enrollment else None,
     )
 
 

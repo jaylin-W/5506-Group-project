@@ -1,0 +1,7 @@
+C:\Users\Jianl\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask_limiter\extension.py:336: UserWarning: Using the in-memory storage for tracking rate limits as no storage was explicitly specified. This is not recommended for production use. See: https://flask-limiter.readthedocs.io#configuring-a-storage-backend for documentation about configuring the storage backend.
+  warnings.warn(
+2026-05-13 21:53:15,778 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5506
+ * Running on http://172.20.10.6:5506
+2026-05-13 21:53:15,779 - werkzeug - INFO - [33mPress CTRL+C to quit[0m

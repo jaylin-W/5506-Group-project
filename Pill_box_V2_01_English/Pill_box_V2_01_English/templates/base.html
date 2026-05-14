@@ -4,10 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ project_name }} {{ project_version }}{% endblock %}</title>
+    <meta name="theme-color" content="#5b7cff">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
 </head>
-<body id="top">
+<body id="top"
+      {% if current_user.is_authenticated %}
+      data-face-status-url="{{ url_for('face_unlock_status') }}"
+      data-face-unlock-url="{{ url_for('unlock_pill_box') }}"
+      {% endif %}>
 
 <nav class="navbar navbar-expand-lg navbar-dark site-navbar fixed-top shadow-sm">
     <div class="container-fluid">
@@ -41,14 +47,57 @@
     <aside class="sidebar">
         <div class="sidebar-card">
             <h5 class="mb-3">Navigation</h5>
-            <a href="{{ url_for('index') }}">HomeIntroduction</a>
+            <a href="{{ url_for('index') }}">Home Introduction</a>
             <a href="{{ url_for('about') }}">Product Info</a>
-            <a href="#top" class="back-top">Back to Top ↑</a>
+            <a href="#top" class="back-top">Back to Top</a>
         </div>
     </aside>
 
     <main class="content-area">
         <div class="container-fluid">
+            {% if current_user.is_authenticated %}
+                <div class="phone-alert-setup">
+                    <div class="phone-alert-copy">
+                        <strong>Phone background alerts</strong>
+                        <span>Enable once on your phone so the pill box can notify you after the page is closed.</span>
+                    </div>
+                    <div class="phone-alert-actions">
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-enable-face-notifications>Enable Phone Alerts</button>
+                        <button type="button" class="btn btn-sm btn-primary" data-send-test-notification>Send Test Notification</button>
+                        <span class="face-notification-status" data-face-notification-status></span>
+                    </div>
+                </div>
+                <div class="face-unlock-alert d-none" data-face-alert>
+                    <a class="face-unlock-alert-title" href="{{ url_for('unlock_pill_box') }}">请输入密码解锁药盒</a>
+                    <span data-face-alert-message>目前面部识别已失败3次，请进入网站输入解锁密码。</span>
+                    <button type="button" class="btn btn-sm btn-outline-primary ms-auto" data-enable-face-notifications>Enable Phone Alerts</button>
+                    <button type="button" class="btn btn-sm btn-primary" data-send-test-notification>Send Test Notification</button>
+                    <span class="face-notification-status" data-face-notification-status></span>
+                </div>
+                <div class="modal fade" id="faceUnlockModal" tabindex="-1" aria-labelledby="faceUnlockModalLabel" aria-hidden="true" data-face-unlock-modal>
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content face-unlock-modal">
+                            <div class="modal-header">
+                                <h2 class="modal-title" id="faceUnlockModalLabel">请输入密码解锁药盒</h2>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <form method="post" action="{{ url_for('unlock_pill_box') }}">
+                                <div class="modal-body">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <p data-face-unlock-modal-message>目前面部识别已失败3次，请输入解锁密码。</p>
+                                    <label class="form-label" for="faceUnlockPassword">Pill Box Unlock Password</label>
+                                    <input id="faceUnlockPassword" type="password" name="unlock_password" class="form-control" required autocomplete="current-password">
+                                </div>
+                                <div class="modal-footer">
+                                    <a class="btn btn-outline-secondary" href="{{ url_for('unlock_pill_box') }}">Open Unlock Page</a>
+                                    <button type="submit" class="btn btn-primary">Unlock Pill Box</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     {% for category, message in messages %}
@@ -66,7 +115,7 @@
 </div>
 
 <footer class="footer">
-    <p class="mb-0">© 2026 {{ project_name }} · Version {{ project_version }} · Flask + SQLite</p>
+    <p class="mb-0">2026 {{ project_name }} | Version {{ project_version }} | Flask + SQLite</p>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
