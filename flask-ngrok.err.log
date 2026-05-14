@@ -3,3 +3,53 @@ C:\Users\Jianl\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n
 2026-05-14 11:40:05,918 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:5000
 2026-05-14 11:40:05,918 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-05-14 12:29:07,483 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:07] "GET / HTTP/1.1" 200 -
+2026-05-14 12:29:07,572 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:07] "GET / HTTP/1.1" 200 -
+2026-05-14 12:29:07,843 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:07] "GET /static/css/custom.css HTTP/1.1" 200 -
+2026-05-14 12:29:07,855 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:07] "GET /static/images/promo_vitamin_c.png HTTP/1.1" 200 -
+2026-05-14 12:29:07,856 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:07] "GET /static/js/main.js HTTP/1.1" 200 -
+2026-05-14 12:29:07,916 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:07] "GET /static/manifest.json HTTP/1.1" 200 -
+2026-05-14 12:29:09,530 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:09] "GET /service-worker.js HTTP/1.1" 200 -
+2026-05-14 12:29:10,187 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:10] "GET /login HTTP/1.1" 200 -
+2026-05-14 12:29:10,204 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:10] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
+2026-05-14 12:29:10,204 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:10] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
+2026-05-14 12:29:11,792 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:29:11] "[36mGET /service-worker.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:19,012 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:19] "GET / HTTP/1.1" 200 -
+2026-05-14 12:50:19,246 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:19] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
+2026-05-14 12:50:19,262 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:19] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:19,274 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:19] "GET / HTTP/1.1" 200 -
+2026-05-14 12:50:19,326 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:19] "[36mGET /static/images/promo_vitamin_c.png HTTP/1.1[0m" 304 -
+2026-05-14 12:50:19,397 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:19] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-05-14 12:50:20,462 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:20] "GET /login HTTP/1.1" 200 -
+2026-05-14 12:50:20,478 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:20] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
+2026-05-14 12:50:20,479 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:20] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:20,922 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:20] "[36mGET /service-worker.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:22,066 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:22] "[36mGET /service-worker.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:34,664 - app - WARNING - Failed login attempt: 123456789
+2026-05-14 12:50:34,675 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:34] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-05-14 12:50:34,683 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:34] "GET /login HTTP/1.1" 200 -
+2026-05-14 12:50:34,694 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:34] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
+2026-05-14 12:50:34,695 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:34] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:36,238 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:36] "[36mGET /service-worker.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:46,678 - app - INFO - User logged in: Jianlin
+2026-05-14 12:50:46,690 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:46] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-05-14 12:50:46,711 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:46] "GET /profile HTTP/1.1" 200 -
+2026-05-14 12:50:46,726 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:46] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
+2026-05-14 12:50:46,727 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:46] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
+2026-05-14 12:50:46,806 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:46] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:50:48,348 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:50:48] "[36mGET /service-worker.js HTTP/1.1[0m" 304 -
+2026-05-14 12:51:01,814 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:51:01] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:51:16,825 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:51:16] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:51:31,819 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:51:31] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:51:46,822 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:51:46] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:52:01,820 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:52:01] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:52:16,814 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:52:16] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:52:31,114 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:52:31] "GET / HTTP/1.1" 200 -
+2026-05-14 12:52:31,822 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:52:31] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:52:46,815 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:52:46] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:53:01,828 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:53:01] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:53:16,818 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:53:16] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:53:31,820 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:53:31] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:53:37,080 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:53:37] "GET / HTTP/1.1" 200 -
+2026-05-14 12:53:46,818 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:53:46] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-14 12:54:01,815 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 12:54:01] "GET /api/face-unlock/status HTTP/1.1" 200 -
