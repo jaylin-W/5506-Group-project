@@ -107,6 +107,7 @@ WINDOW_OPTIONS = list(range(5, 65, 5))
 
 PRODUCT_CODE_EXAMPLE = "5506xxx"
 DEFAULT_PRODUCT_CODE = "5506123"
+DEFAULT_DEVICE_ID = f"xiao-esp32s3-sense-{DEFAULT_PRODUCT_CODE}"
 
 SECURITY_QUESTIONS = [
     ("math_1_plus_1", "1 + 1 = ?"),
@@ -228,6 +229,15 @@ def validate_product_code(product_code):
     return True, normalized_code
 
 
+def validate_device_id(device_id):
+    normalized_id = device_id.strip()
+    if not normalized_id:
+        return True, None
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,63}", normalized_id):
+        return False, "Device ID must be 3-64 characters and may only contain letters, numbers, hyphens, and underscores."
+    return True, normalized_id
+
+
 def get_security_questions(randomize=False):
     questions = SECURITY_QUESTIONS.copy()
     if randomize:
@@ -266,6 +276,7 @@ def init_db():
             security_question TEXT,
             security_answer_hash TEXT,
             product_code TEXT,
+            device_id TEXT,
             age INTEGER,
             health_goal TEXT,
             face_failed_attempts INTEGER NOT NULL DEFAULT 0,
@@ -279,6 +290,7 @@ def init_db():
     ensure_column(conn, "user", "security_question", "security_question TEXT")
     ensure_column(conn, "user", "security_answer_hash", "security_answer_hash TEXT")
     ensure_column(conn, "user", "product_code", "product_code TEXT")
+    ensure_column(conn, "user", "device_id", "device_id TEXT")
     ensure_column(conn, "user", "face_failed_attempts", "face_failed_attempts INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "user", "unlock_required", "unlock_required INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "user", "last_face_failure_at", "last_face_failure_at TEXT")
@@ -288,6 +300,13 @@ def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS idx_user_product_code
         ON user(product_code)
         WHERE product_code IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_device_id
+        ON user(device_id)
+        WHERE device_id IS NOT NULL
         """
     )
     conn.execute(
@@ -348,6 +367,35 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS device_reminder_event (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            schedule_id INTEGER NOT NULL,
+            reminder_key TEXT UNIQUE NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            device_id TEXT,
+            triggered_at TEXT NOT NULL,
+            completed_at TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES user(id),
+            FOREIGN KEY (schedule_id) REFERENCES supplement_schedule(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        UPDATE user
+        SET device_id = ?
+        WHERE product_code = ?
+          AND (device_id IS NULL OR device_id = '')
+          AND NOT EXISTS (
+              SELECT 1 FROM user WHERE device_id = ?
+          )
+        """,
+        (DEFAULT_DEVICE_ID, DEFAULT_PRODUCT_CODE, DEFAULT_DEVICE_ID),
+    )
     for key, value in DEFAULT_CONTENT_BLOCKS.items():
         conn.execute(
             "INSERT OR IGNORE INTO content_block (block_key, block_value) VALUES (?, ?)",
@@ -370,6 +418,7 @@ class User(UserMixin):
         security_question=None,
         security_answer_hash=None,
         product_code=None,
+        device_id=None,
         face_failed_attempts=0,
         unlock_required=0,
         last_face_failure_at=None,
@@ -385,6 +434,7 @@ class User(UserMixin):
         self.security_question = security_question
         self.security_answer_hash = security_answer_hash
         self.product_code = product_code
+        self.device_id = device_id
         self.face_failed_attempts = face_failed_attempts or 0
         self.unlock_required = bool(unlock_required)
         self.last_face_failure_at = last_face_failure_at
@@ -405,6 +455,7 @@ class User(UserMixin):
             security_question=row["security_question"],
             security_answer_hash=row["security_answer_hash"],
             product_code=row["product_code"],
+            device_id=row["device_id"],
             face_failed_attempts=row["face_failed_attempts"],
             unlock_required=row["unlock_required"],
             last_face_failure_at=row["last_face_failure_at"],
@@ -475,6 +526,150 @@ def get_user_schedules(user_id):
     ).fetchall()
     conn.close()
     return rows
+
+
+def local_now():
+    return datetime.now().astimezone()
+
+
+def parse_take_time_minutes(take_time):
+    try:
+        hour, minute = take_time.split(":", 1)
+        return int(hour) * 60 + int(minute)
+    except (AttributeError, ValueError):
+        return None
+
+
+def circular_minute_distance(left, right):
+    distance = abs(left - right)
+    return min(distance, 24 * 60 - distance)
+
+
+def serialize_schedule_for_device(row, now=None):
+    now = now or local_now()
+    scheduled_minutes = parse_take_time_minutes(row["take_time"])
+    now_minutes = now.hour * 60 + now.minute
+    minutes_from_target = None
+    is_due = False
+    if scheduled_minutes is not None:
+        minutes_from_target = circular_minute_distance(now_minutes, scheduled_minutes)
+        is_due = minutes_from_target <= int(row["time_window"])
+
+    reminder_key = f"{row['id']}:{now.date().isoformat()}:{row['take_time']}"
+    return {
+        "schedule_id": row["id"],
+        "reminder_key": reminder_key,
+        "supplement_name": row["supplement_name"],
+        "take_time": row["take_time"],
+        "time_window": row["time_window"],
+        "note": row["note"],
+        "is_due": is_due,
+        "minutes_from_target": minutes_from_target,
+    }
+
+
+def get_device_reminder_event(user_id, reminder_key):
+    conn = get_db_connection()
+    row = conn.execute(
+        """
+        SELECT id, status, completed_at
+        FROM device_reminder_event
+        WHERE user_id = ? AND reminder_key = ?
+        """,
+        (user_id, reminder_key),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def record_device_reminder_event(user_id, reminder, device_id=None):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO device_reminder_event
+            (user_id, schedule_id, reminder_key, status, device_id, triggered_at, updated_at)
+            VALUES (?, ?, ?, 'pending', ?, ?, ?)
+            ON CONFLICT(reminder_key) DO UPDATE SET
+                device_id = COALESCE(excluded.device_id, device_reminder_event.device_id),
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                reminder["schedule_id"],
+                reminder["reminder_key"],
+                device_id,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def complete_device_reminder_event(user_id, reminder_key, device_id=None):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            """
+            UPDATE device_reminder_event
+            SET status = 'completed',
+                completed_at = COALESCE(completed_at, ?),
+                updated_at = ?,
+                device_id = COALESCE(?, device_id)
+            WHERE user_id = ? AND reminder_key = ?
+            """,
+            (now, now, device_id, user_id, reminder_key),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_device_reminder_state(user_id, device_id=None):
+    now = local_now()
+    schedules = [serialize_schedule_for_device(row, now) for row in get_user_schedules(user_id)]
+    due_schedules = [schedule for schedule in schedules if schedule["is_due"]]
+    due_schedules.sort(key=lambda schedule: (schedule["minutes_from_target"], schedule["take_time"], schedule["schedule_id"]))
+
+    active_reminder = None
+    if due_schedules:
+        candidate = due_schedules[0]
+        event = get_device_reminder_event(user_id, candidate["reminder_key"])
+        if event is None or event["status"] != "completed":
+            record_device_reminder_event(user_id, candidate, device_id)
+            active_reminder = candidate
+
+    face_status = get_face_unlock_status(user_id)
+    device_action = "idle"
+    if face_status and face_status.get("unlock_required"):
+        device_action = "wait_for_pin"
+    elif active_reminder:
+        device_action = "ring_reminder"
+
+    next_reminder = None
+    if schedules:
+        next_reminder = sorted(
+            schedules,
+            key=lambda schedule: (
+                schedule["minutes_from_target"] if schedule["minutes_from_target"] is not None else 24 * 60,
+                schedule["take_time"],
+                schedule["schedule_id"],
+            ),
+        )[0]
+
+    return {
+        "device_action": device_action,
+        "server_time": now.isoformat(timespec="seconds"),
+        "active_reminder": active_reminder,
+        "next_reminder": next_reminder,
+        "schedules": schedules,
+        "face_unlock": face_status,
+    }
 
 
 def utc_now_iso():
@@ -565,17 +760,19 @@ def find_user_id_from_payload(payload):
     user_id = payload.get("user_id")
     username = (payload.get("username") or "").strip()
     product_code = (payload.get("product_code") or "").strip().upper()
+    device_id = (payload.get("device_id") or "").strip()
 
     conn = get_db_connection()
     try:
-        if user_id:
+        row = None
+        if device_id:
+            row = conn.execute("SELECT id FROM user WHERE device_id = ?", (device_id,)).fetchone()
+        if row is None and user_id:
             row = conn.execute("SELECT id FROM user WHERE id = ?", (user_id,)).fetchone()
-        elif username:
+        if row is None and username:
             row = conn.execute("SELECT id FROM user WHERE username = ?", (username,)).fetchone()
-        elif product_code:
+        if row is None and product_code:
             row = conn.execute("SELECT id FROM user WHERE product_code = ?", (product_code,)).fetchone()
-        else:
-            row = None
     finally:
         conn.close()
 
@@ -1180,10 +1377,40 @@ def push_test():
     return jsonify(result)
 
 
+@app.route("/api/device/reminder-state", methods=["POST"])
+@csrf.exempt
+def device_reminder_state():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    state = get_device_reminder_state(user_id, payload.get("device_id"))
+    return jsonify(state)
+
+
+@app.route("/api/device/reminder-complete", methods=["POST"])
+@csrf.exempt
+def device_reminder_complete():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    reminder_key = (payload.get("reminder_key") or "").strip()
+    if not reminder_key:
+        return jsonify({"error": "Missing reminder_key."}), 400
+
+    completed = complete_device_reminder_event(user_id, reminder_key, payload.get("device_id"))
+    return jsonify({"ok": completed, "reminder_key": reminder_key})
+
+
 @app.route("/api/face-unlock/failure", methods=["POST"])
 @csrf.exempt
 def report_face_unlock_failure():
-    payload = request.get_json(silent=True) or {}
+    payload = get_device_payload()
     user_id, error = resolve_device_request_user(payload)
     if error:
         message, status_code = error
@@ -1199,9 +1426,10 @@ def report_face_unlock_failure():
     else:
         status["push"] = {"sent": 0, "reason": "failure threshold not reached or already notified"}
     logger.info(
-        "Face unlock failure reported: user_id=%s product_code=%s failed_attempts=%s unlock_required=%s push=%s",
+        "Face unlock failure reported: user_id=%s product_code=%s device_id=%s failed_attempts=%s unlock_required=%s push=%s",
         user_id,
         payload.get("product_code"),
+        payload.get("device_id"),
         status.get("failed_attempts"),
         status.get("unlock_required"),
         status.get("push"),
@@ -1212,7 +1440,7 @@ def report_face_unlock_failure():
 @app.route("/api/face-unlock/device-status", methods=["POST"])
 @csrf.exempt
 def face_unlock_device_status():
-    payload = request.get_json(silent=True) or {}
+    payload = get_device_payload()
     user_id, error = resolve_device_request_user(payload)
     if error:
         message, status_code = error
@@ -1231,7 +1459,7 @@ def face_unlock_device_status():
 @app.route("/api/face-unlock/success", methods=["POST"])
 @csrf.exempt
 def report_face_unlock_success():
-    payload = request.get_json(silent=True) or {}
+    payload = get_device_payload()
     user_id, error = resolve_device_request_user(payload)
     if error:
         message, status_code = error
@@ -1420,6 +1648,7 @@ def profile():
             security_question = request.form.get("security_question", "").strip()
             security_answer = request.form.get("security_answer", "")
             product_code = request.form.get("product_code", "")
+            device_id = request.form.get("device_id", "")
             login_password_updated = False
             unlock_password_updated = False
 
@@ -1479,6 +1708,11 @@ def profile():
                 flash(product_code_value, "danger")
                 return redirect(url_for("profile"))
 
+            valid, device_id_value = validate_device_id(device_id)
+            if not valid:
+                flash(device_id_value, "danger")
+                return redirect(url_for("profile"))
+
             health_goal_value = health_goal or None
             conn = get_db_connection()
             try:
@@ -1491,7 +1725,8 @@ def profile():
                         unlock_password_hash = ?,
                         security_question = ?,
                         security_answer_hash = ?,
-                        product_code = ?
+                        product_code = ?,
+                        device_id = ?
                     WHERE id = ?
                     """,
                     (
@@ -1502,13 +1737,14 @@ def profile():
                         security_question,
                         security_answer_hash,
                         product_code_value,
+                        device_id_value,
                         current_user.id,
                     ),
                 )
                 conn.commit()
                 logger.info(f"User profile updated: {current_user.username}")
             except sqlite3.IntegrityError:
-                flash("This product unlock code is already linked to another account.", "danger")
+                flash("This product unlock code or device ID is already linked to another account.", "danger")
                 return redirect(url_for("profile"))
             except sqlite3.DatabaseError as e:
                 logger.error(f"Failed to update user profile: {e}")
@@ -1524,6 +1760,7 @@ def profile():
             current_user.security_question = security_question
             current_user.security_answer_hash = security_answer_hash
             current_user.product_code = product_code_value
+            current_user.device_id = device_id_value
             success_message = "Profile updated successfully."
             if login_password_updated:
                 success_message += " Login password updated."
@@ -1587,6 +1824,7 @@ def profile():
         security_question_text=SECURITY_QUESTION_LABELS.get(current_user.security_question),
         product_code_example=PRODUCT_CODE_EXAMPLE,
         default_product_code=DEFAULT_PRODUCT_CODE,
+        default_device_id=DEFAULT_DEVICE_ID,
         latest_face_enrollment=serialize_face_enrollment_session(latest_face_enrollment) if latest_face_enrollment else None,
     )
 

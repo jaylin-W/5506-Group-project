@@ -3,12 +3,13 @@
  * Buzzer + Button + LED Status + Face Detection + Servo Unlock Test
  *
  * Flow:
- * 1. Buzzer starts
- * 2. User presses button to mute buzzer
- * 3. Yellow LED + White LED turn on
- * 4. ESP32S3 runs face detection
- * 5. Success: Green LED on, Yellow/White off, Servo unlocks
- * 6. Failure: Red LED on, Yellow off, White stays on
+ * 1. ESP32S3 polls the website for the current database-backed reminder
+ * 2. A due reminder starts the buzzer
+ * 3. User presses button to mute buzzer
+ * 4. Yellow LED + White LED turn on
+ * 5. ESP32S3 runs face detection
+ * 6. Success: Green LED on, Yellow/White off, Servo unlocks
+ * 7. Failure: Red LED on, Yellow off, White stays on
  */
 
 #include <ESP32Servo.h>
@@ -48,18 +49,23 @@ using eloq::face::recognition;
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
-// Use the current HTTPS ngrok URL from start_with_ngrok.ps1.
-// This URL changes when ngrok restarts unless you use a reserved domain.
-const char* SERVER_BASE_URL = "https://panning-snagged-constrict.ngrok-free.dev";
+// ESP32S3 is on the same WiFi as the laptop, so use the laptop LAN URL.
+// If the laptop IP changes, update this value before uploading the sketch.
+const char* SERVER_BASE_URL = "http://172.20.10.2:5506";
 const char* DEVICE_API_TOKEN = "5506-local-device-token";
-const char* PRODUCT_CODE = "5506123";
 const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
 
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 const unsigned long DEVICE_STATUS_POLL_MS = 3000;
+const unsigned long DEVICE_REMINDER_POLL_MS = 15000;
 
 String lastSeenRemoteUnlockAt = "";
 unsigned long lastDeviceStatusPoll = 0;
+unsigned long lastReminderPoll = 0;
+String activeReminderKey = "";
+String completedReminderKey = "";
+String activeReminderLabel = "";
+String activeReminderTime = "";
 
 
 // =====================
@@ -100,7 +106,7 @@ unsigned long lastDebounceTime = 0;
 // =====================
 // Buzzer
 // =====================
-bool buzzerActive = true;
+bool buzzerActive = false;
 bool buzzerState = false;
 unsigned long lastBuzzerToggle = 0;
 const unsigned long BUZZER_INTERVAL_MS = 300;
@@ -110,6 +116,7 @@ const unsigned long BUZZER_INTERVAL_MS = 300;
 // System state
 // =====================
 enum SystemState {
+  REMINDER_IDLE,
   REMINDER_BUZZING,
   FACE_VERIFYING,
   FACE_SUCCESS,
@@ -117,7 +124,9 @@ enum SystemState {
   FACE_REMOTE_UNLOCK_WAITING
 };
 
-SystemState currentState = REMINDER_BUZZING;
+SystemState currentState = REMINDER_IDLE;
+
+void allLightsOff();
 
 
 // =====================
@@ -139,6 +148,12 @@ void unlockServo() {
 void updateServoAutoLock() {
   if (servoUnlocked && millis() - servoUnlockStartTime >= SERVO_UNLOCK_TIME_MS) {
     lockServo();
+    if (currentState == FACE_SUCCESS) {
+      allLightsOff();
+      currentState = REMINDER_IDLE;
+      lastReminderPoll = 0;
+      Serial.println("Reminder flow completed. Waiting for the next database reminder.");
+    }
   }
 }
 
@@ -289,13 +304,17 @@ String websiteUrl(const char* path) {
 
 String devicePayload(const char* eventName) {
   String payload = "{";
-  payload += "\"product_code\":\"";
-  payload += PRODUCT_CODE;
-  payload += "\",\"device_id\":\"";
+  payload += "\"device_id\":\"";
   payload += DEVICE_ID;
   payload += "\",\"event\":\"";
   payload += eventName;
-  payload += "\"}";
+  payload += "\"";
+  if (activeReminderKey.length() > 0) {
+    payload += ",\"reminder_key\":\"";
+    payload += activeReminderKey;
+    payload += "\"";
+  }
+  payload += "}";
   return payload;
 }
 
@@ -336,6 +355,11 @@ String postToWebsite(const char* path, const String& payload, int& httpCode) {
   Serial.print(path);
   Serial.print(" -> HTTP ");
   Serial.println(httpCode);
+
+  if (httpCode < 0) {
+    Serial.print("HTTP error: ");
+    Serial.println(http.errorToString(httpCode));
+  }
 
   if (response.length() > 0) {
     Serial.print("Response: ");
@@ -407,11 +431,82 @@ String jsonStringValue(const String& json, const char* key) {
   return json.substring(start, end);
 }
 
+bool completeActiveReminderOnWebsite() {
+  if (activeReminderKey.length() == 0) {
+    return false;
+  }
+
+  int httpCode = -1;
+  String response = postToWebsite("/api/device/reminder-complete", devicePayload("reminder_completed"), httpCode);
+  if (httpCode != 200 || response.length() == 0) {
+    return false;
+  }
+
+  completedReminderKey = activeReminderKey;
+  Serial.print("Reminder completed: ");
+  Serial.println(activeReminderKey);
+
+  activeReminderKey = "";
+  activeReminderLabel = "";
+  activeReminderTime = "";
+  return true;
+}
+
 void continueAfterWebsitePinUnlock() {
   Serial.println("Website PIN confirmed. Continuing pill box unlock flow.");
   showVerificationSuccess();
   unlockServo();
+  completeActiveReminderOnWebsite();
   currentState = FACE_SUCCESS;
+}
+
+bool pollReminderState() {
+  int httpCode = -1;
+  String response = postToWebsite("/api/device/reminder-state", devicePayload("poll_reminder"), httpCode);
+  if (httpCode != 200 || response.length() == 0) {
+    return false;
+  }
+
+  String action = jsonStringValue(response, "device_action");
+  String reminderKey = jsonStringValue(response, "reminder_key");
+
+  if (action == "wait_for_pin") {
+    if (currentState == REMINDER_IDLE || currentState == FACE_FAILED) {
+      currentState = FACE_REMOTE_UNLOCK_WAITING;
+      showVerificationFailed();
+      Serial.println("Server says website PIN unlock is required.");
+    }
+    return true;
+  }
+
+  if (action == "ring_reminder" && reminderKey.length() > 0) {
+    if (reminderKey == completedReminderKey) {
+      return true;
+    }
+
+    if (currentState == REMINDER_IDLE || currentState == FACE_SUCCESS) {
+      activeReminderKey = reminderKey;
+      activeReminderLabel = jsonStringValue(response, "supplement_name");
+      activeReminderTime = jsonStringValue(response, "take_time");
+      currentState = REMINDER_BUZZING;
+      startBuzzer();
+
+      Serial.println();
+      Serial.println("Database reminder is due.");
+      Serial.print("Reminder: ");
+      Serial.print(activeReminderLabel.length() > 0 ? activeReminderLabel : "Supplement");
+      Serial.print(" at ");
+      Serial.println(activeReminderTime.length() > 0 ? activeReminderTime : "scheduled time");
+      Serial.println("Buzzer is ringing. Press button to start face detection.");
+    }
+    return true;
+  }
+
+  if (action == "idle" && currentState == REMINDER_IDLE) {
+    Serial.println("No database reminder is due now.");
+  }
+
+  return true;
 }
 
 bool refreshDeviceStatus(bool baselineOnly) {
@@ -473,6 +568,7 @@ bool reportFaceFailureToWebsite() {
 void reportFaceSuccessToWebsite() {
   int httpCode = -1;
   postToWebsite("/api/face-unlock/success", devicePayload("face_success"), httpCode);
+  completeActiveReminderOnWebsite();
 }
 
 void handleFaceFailureResult() {
@@ -605,15 +701,17 @@ void setup() {
 
   if (ensureWiFiConnected()) {
     refreshDeviceStatus(true);
+    pollReminderState();
   }
 
-  currentState = REMINDER_BUZZING;
-  startBuzzer();
+  if (currentState != REMINDER_BUZZING && currentState != FACE_REMOTE_UNLOCK_WAITING) {
+    currentState = REMINDER_IDLE;
+  }
 
   Serial.println();
   Serial.println("System started.");
-  Serial.println("Buzzer is ringing.");
-  Serial.println("Press button to stop buzzer and start face detection.");
+  Serial.println("Waiting for the website database reminder.");
+  Serial.println("Add a due supplement schedule on the website to start the buzzer.");
 }
 
 
@@ -623,6 +721,12 @@ void setup() {
 void loop() {
   updateBuzzer();
   updateServoAutoLock();
+
+  if (currentState == REMINDER_IDLE
+      && millis() - lastReminderPoll >= DEVICE_REMINDER_POLL_MS) {
+    lastReminderPoll = millis();
+    pollReminderState();
+  }
 
   if (currentState == FACE_REMOTE_UNLOCK_WAITING
       && millis() - lastDeviceStatusPoll >= DEVICE_STATUS_POLL_MS) {
@@ -634,7 +738,12 @@ void loop() {
     Serial.println();
     Serial.println("Button pressed.");
 
-    if (currentState == REMINDER_BUZZING) {
+    if (currentState == REMINDER_IDLE) {
+      Serial.println("No active website reminder yet. Waiting for a due database schedule.");
+      pollReminderState();
+    }
+
+    else if (currentState == REMINDER_BUZZING) {
       stopBuzzer();
 
       currentState = FACE_VERIFYING;

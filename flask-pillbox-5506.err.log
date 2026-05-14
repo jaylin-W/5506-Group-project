@@ -1,105 +1,48 @@
 C:\Users\Jianl\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\flask_limiter\extension.py:336: UserWarning: Using the in-memory storage for tracking rate limits as no storage was explicitly specified. This is not recommended for production use. See: https://flask-limiter.readthedocs.io#configuring-a-storage-backend for documentation about configuring the storage backend.
   warnings.warn(
-2026-05-14 11:28:31,589 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+2026-05-14 14:10:06,375 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on all addresses (0.0.0.0)
  * Running on http://127.0.0.1:5506
- * Running on http://172.20.10.2:5506
-2026-05-14 11:28:31,589 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
-2026-05-14 11:28:50,384 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 11:28:50] "GET / HTTP/1.1" 200 -
-2026-05-14 11:29:18,184 - werkzeug - INFO - 172.20.10.2 - - [14/May/2026 11:29:18] "GET / HTTP/1.1" 200 -
-2026-05-14 11:30:31,114 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:31] "GET / HTTP/1.1" 200 -
-2026-05-14 11:30:31,483 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:31] "GET /static/manifest.json HTTP/1.1" 200 -
-2026-05-14 11:30:31,522 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:31] "GET /static/js/main.js HTTP/1.1" 200 -
-2026-05-14 11:30:31,525 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:31] "GET /static/css/custom.css HTTP/1.1" 200 -
-2026-05-14 11:30:32,106 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:32] "GET /static/images/promo_vitamin_c.png HTTP/1.1" 200 -
-2026-05-14 11:30:32,961 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:32] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
-2026-05-14 11:30:35,327 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:35] "GET /static/images/promo_fish_oil.png HTTP/1.1" 200 -
-2026-05-14 11:30:38,531 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:38] "GET /static/images/promo_gut_health.png HTTP/1.1" 200 -
-2026-05-14 11:30:41,746 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:41] "GET /static/images/promo_multivitamin.png HTTP/1.1" 200 -
-2026-05-14 11:30:42,199 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:42] "[33mGET /apple-touch-icon-precomposed.png HTTP/1.1[0m" 404 -
-2026-05-14 11:30:42,203 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:42] "[33mGET /apple-touch-icon.png HTTP/1.1[0m" 404 -
-2026-05-14 11:30:42,203 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:42] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
-2026-05-14 11:30:45,175 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:45] "[33mGET /apple-touch-icon-120x120-precomposed.png HTTP/1.1[0m" 404 -
-2026-05-14 11:30:45,175 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:45] "GET /static/images/promo_multivitamin.png HTTP/1.1" 200 -
-2026-05-14 11:30:45,238 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:45] "[33mGET /apple-touch-icon-120x120.png HTTP/1.1[0m" 404 -
-2026-05-14 11:30:45,292 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:45] "[33mGET /apple-touch-icon.png HTTP/1.1[0m" 404 -
-2026-05-14 11:30:45,383 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:45] "[33mGET /apple-touch-icon.png HTTP/1.1[0m" 404 -
-2026-05-14 11:30:49,096 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:49] "GET / HTTP/1.1" 200 -
-2026-05-14 11:30:49,140 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:49] "GET /static/manifest.json HTTP/1.1" 200 -
-2026-05-14 11:30:49,148 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:49] "GET /static/css/custom.css HTTP/1.1" 200 -
-2026-05-14 11:30:49,149 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:49] "GET /static/js/main.js HTTP/1.1" 200 -
-2026-05-14 11:30:49,965 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:49] "GET /static/images/promo_vitamin_c.png HTTP/1.1" 200 -
-2026-05-14 11:30:53,216 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:53] "GET /static/images/promo_fish_oil.png HTTP/1.1" 200 -
-2026-05-14 11:30:56,319 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:56] "GET /register HTTP/1.1" 200 -
-2026-05-14 11:30:56,388 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:56] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:30:56,392 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:56] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:30:56,397 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:30:56] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:31:19,678 - app - INFO - New user registered: Lucas
-2026-05-14 11:31:19,679 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:19] "[32mPOST /register HTTP/1.1[0m" 302 -
-2026-05-14 11:31:19,716 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:19] "GET /login HTTP/1.1" 200 -
-2026-05-14 11:31:19,731 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:19] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:31:19,746 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:19] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:31:19,746 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:19] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:31:38,852 - app - INFO - User logged in: Lucas
-2026-05-14 11:31:38,862 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:38] "[32mPOST /login HTTP/1.1[0m" 302 -
-2026-05-14 11:31:38,894 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:38] "GET /profile HTTP/1.1" 200 -
-2026-05-14 11:31:38,909 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:38] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:31:38,913 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:38] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:31:38,915 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:38] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:31:38,927 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:38] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:31:53,934 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:31:53] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:32:08,957 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:08] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:32:23,951 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:23] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:32:38,954 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:38] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:32:48,089 - app - INFO - User profile updated: Lucas
-2026-05-14 11:32:48,090 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:48] "[32mPOST /profile HTTP/1.1[0m" 302 -
-2026-05-14 11:32:48,112 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:48] "GET /profile HTTP/1.1" 200 -
-2026-05-14 11:32:48,149 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:48] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:32:48,155 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:48] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:32:48,155 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:48] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:32:48,168 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:48] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:32:58,482 - app - INFO - Web Push requested for user_id=3 subscriptions=0 configured=True
-2026-05-14 11:32:58,492 - app - INFO - Web Push completed for user_id=3 sent=0 subscriptions=0
-2026-05-14 11:32:58,493 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:32:58] "POST /api/push/test HTTP/1.1" 200 -
-2026-05-14 11:33:03,176 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:33:03] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:33:18,194 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:33:18] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:33:33,174 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:33:33] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:33:48,173 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:33:48] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:34:13,481 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:34:13] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:34:28,494 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:34:28] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:34:58,104 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:34:58] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:35:31,120 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:31] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:35:36,065 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "GET /about HTTP/1.1" 200 -
-2026-05-14 11:35:36,083 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,094 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,098 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,120 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:35:36,957 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "GET / HTTP/1.1" 200 -
-2026-05-14 11:35:36,974 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,976 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,976 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,976 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/images/promo_fish_oil.png HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,978 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/images/promo_vitamin_c.png HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,995 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:35:36,997 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:36] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:35:37,010 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:37] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:35:38,533 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:38] "GET /about HTTP/1.1" 200 -
-2026-05-14 11:35:38,550 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:38] "[36mGET /static/manifest.json HTTP/1.1[0m" 304 -
-2026-05-14 11:35:38,617 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:38] "[36mGET /static/css/custom.css HTTP/1.1[0m" 304 -
-2026-05-14 11:35:38,617 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:38] "[36mGET /static/js/main.js HTTP/1.1[0m" 304 -
-2026-05-14 11:35:38,638 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:38] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:35:42,972 - app - INFO - Web Push requested for user_id=3 subscriptions=0 configured=True
-2026-05-14 11:35:42,972 - app - INFO - Web Push completed for user_id=3 sent=0 subscriptions=0
-2026-05-14 11:35:42,972 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:42] "POST /api/push/test HTTP/1.1" 200 -
-2026-05-14 11:35:53,644 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:35:53] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:36:53,675 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:36:53] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:37:08,662 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:37:08] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:37:23,649 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:37:23] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:37:38,651 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:37:38] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:37:53,652 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:37:53] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:38:08,652 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:38:08] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:38:23,658 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:38:23] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:38:38,655 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:38:38] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:39:19,238 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 11:39:19] "GET / HTTP/1.1" 200 -
-2026-05-14 11:40:46,803 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:40:46] "GET /api/face-unlock/status HTTP/1.1" 200 -
-2026-05-14 11:46:47,975 - werkzeug - INFO - 172.20.10.1 - - [14/May/2026 11:46:47] "GET /api/face-unlock/status HTTP/1.1" 200 -
+ * Running on http://10.133.7.56:5506
+2026-05-14 14:10:06,375 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-05-14 14:10:40,019 - werkzeug - INFO - 127.0.0.1 - - [14/May/2026 14:10:40] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:10:40,111 - werkzeug - INFO - 10.133.7.56 - - [14/May/2026 14:10:40] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:11:21,673 - werkzeug - INFO - 10.133.7.56 - - [14/May/2026 14:11:21] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:13:14,964 - werkzeug - INFO - 10.133.7.56 - - [14/May/2026 14:13:14] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:33:10,507 - werkzeug - INFO - 172.20.10.2 - - [14/May/2026 14:33:10] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:35:40,102 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:35:40] "POST /api/face-unlock/device-status HTTP/1.1" 200 -
+2026-05-14 14:35:40,268 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:35:40] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:35:49,662 - app - INFO - Face unlock failure reported: user_id=3 product_code=None device_id=xiao-esp32s3-sense-5506123 failed_attempts=1 unlock_required=False push={'sent': 0, 'reason': 'failure threshold not reached or already notified'}
+2026-05-14 14:35:49,663 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:35:49] "POST /api/face-unlock/failure HTTP/1.1" 200 -
+2026-05-14 14:35:57,466 - app - INFO - Face unlock failure reported: user_id=3 product_code=None device_id=xiao-esp32s3-sense-5506123 failed_attempts=2 unlock_required=False push={'sent': 0, 'reason': 'failure threshold not reached or already notified'}
+2026-05-14 14:35:57,467 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:35:57] "POST /api/face-unlock/failure HTTP/1.1" 200 -
+2026-05-14 14:36:04,308 - app - INFO - Web Push requested for user_id=3 subscriptions=2 configured=True
+2026-05-14 14:36:05,523 - app - WARNING - Web Push failed for https://wns2-bl2p.notify.windows.com/w/?token=BQYAAADrnLsA2S4kRv4%2bJJVJu%2fYI%2bLylPoBJcAw0LcxbIdZ5jHZCmvvqNAMUvOUpnut%2fxoIz90dPbc9AZ%2ffMLvWCK8nl1jJt99Hhns%2b8IebqNbkSuVeucw6zWKMQqkCA5kDWrBoApSiEgupIg2P8ixV%2bG4M%2fh5%2feAi3OToS59w25xS78rMXdYl%2bapZTPWOhyxjpxnbGY50p6aIiSEJNRu%2fZDffmftzutlTAPsfyeOIqTuC2HSzpfq5PrWkPRTKbvbgniN5MHmn1VxDpQEUyrzZ5Mh%2fuSMGaGS%2btBspdIzux%2bylEXTltnX1wULvkTTS39BaBmfslEvuQmFFdfcKqgkBLgii0g: WebPushException: Push failed: 400 Bad Request
+Response body:, Response 
+2026-05-14 14:36:07,023 - app - INFO - Web Push completed for user_id=3 sent=1 subscriptions=2
+2026-05-14 14:36:07,024 - app - INFO - Face unlock failure reported: user_id=3 product_code=None device_id=xiao-esp32s3-sense-5506123 failed_attempts=3 unlock_required=True push={'sent': 1, 'configured': True, 'subscriptions': 2}
+2026-05-14 14:36:07,024 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:07] "POST /api/face-unlock/failure HTTP/1.1" 200 -
+2026-05-14 14:36:07,253 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:07] "POST /api/face-unlock/device-status HTTP/1.1" 200 -
+2026-05-14 14:36:10,231 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:10] "POST /api/face-unlock/device-status HTTP/1.1" 200 -
+2026-05-14 14:36:13,193 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:13] "POST /api/face-unlock/device-status HTTP/1.1" 200 -
+2026-05-14 14:36:16,151 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:16] "POST /api/face-unlock/device-status HTTP/1.1" 200 -
+2026-05-14 14:36:16,406 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:16] "POST /api/device/reminder-complete HTTP/1.1" 200 -
+2026-05-14 14:36:21,363 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:21] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:36:36,251 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:36] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:36:51,324 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:36:51] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:37:06,356 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:37:06] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:37:21,291 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:37:21] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:37:36,350 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:37:36] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:37:51,238 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:37:51] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:38:06,352 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:38:06] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:38:21,296 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:38:21] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:38:36,449 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:38:36] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:38:51,297 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:38:51] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:39:06,364 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:39:06] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:39:21,311 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:39:21] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:39:36,252 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:39:36] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:39:51,423 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:39:51] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:40:06,243 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:40:06] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:40:21,234 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:40:21] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:40:36,359 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:40:36] "POST /api/device/reminder-state HTTP/1.1" 200 -
+2026-05-14 14:40:51,235 - werkzeug - INFO - 172.20.10.3 - - [14/May/2026 14:40:51] "POST /api/device/reminder-state HTTP/1.1" 200 -
