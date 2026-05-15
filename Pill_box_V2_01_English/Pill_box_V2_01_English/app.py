@@ -7,7 +7,7 @@ from flask_login import (
     login_required,
     current_user,
 )
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFError, CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -60,9 +60,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 csrf = CSRFProtect(app)
+
+
+def get_rate_limit_key():
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if request.remote_addr in {"127.0.0.1", "::1"} and forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return get_remote_address()
+
+
 limiter = Limiter(
     app=app,
-    key_func=get_remote_address,
+    key_func=get_rate_limit_key,
     default_limits=["200 per day", "50 per hour"]
 )
 
@@ -1192,6 +1201,7 @@ def register():
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
+        normalized_username = username.lower()
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
@@ -1249,8 +1259,8 @@ def register():
 
         conn = get_db_connection()
         existing_user = conn.execute(
-            "SELECT * FROM user WHERE username = ? OR email = ?",
-            (username, email),
+            "SELECT * FROM user WHERE lower(username) = ? OR lower(email) = ?",
+            (normalized_username, email.lower()),
         ).fetchone()
 
         if existing_user:
@@ -1293,6 +1303,7 @@ def login():
 
     if request.method == "POST":
         account = request.form.get("account", "").strip()
+        normalized_account = account.lower()
         password = request.form.get("password", "")
 
         if not account or not password:
@@ -1302,8 +1313,8 @@ def login():
         conn = get_db_connection()
         try:
             row = conn.execute(
-                "SELECT * FROM user WHERE username = ? OR email = ?",
-                (account, account.lower()),
+                "SELECT * FROM user WHERE lower(username) = ? OR lower(email) = ?",
+                (normalized_account, normalized_account),
             ).fetchone()
         finally:
             conn.close()
@@ -1379,6 +1390,7 @@ def push_test():
 
 @app.route("/api/device/reminder-state", methods=["POST"])
 @csrf.exempt
+@limiter.limit("10000 per hour", override_defaults=True)
 def device_reminder_state():
     payload = get_device_payload()
     user_id, error = resolve_device_request_user(payload)
@@ -1392,6 +1404,7 @@ def device_reminder_state():
 
 @app.route("/api/device/reminder-complete", methods=["POST"])
 @csrf.exempt
+@limiter.limit("10000 per hour", override_defaults=True)
 def device_reminder_complete():
     payload = get_device_payload()
     user_id, error = resolve_device_request_user(payload)
@@ -1854,6 +1867,19 @@ def delete_schedule(schedule_id):
 @app.errorhandler(404)
 def not_found_error(error):
     return render_template('404.html'), 404
+
+
+@app.errorhandler(CSRFError)
+def csrf_error(error):
+    logger.warning(f"CSRF validation failed on {request.path}: {error.description}")
+    message = "Your form session expired. Please refresh the page and try again."
+    if request.path.startswith("/api/") or request.accept_mimetypes.best == "application/json":
+        return jsonify({"error": message}), 400
+
+    flash(message, "warning")
+    if request.referrer and is_safe_url(request.referrer):
+        return redirect(request.referrer)
+    return redirect(url_for("login"))
 
 
 @app.errorhandler(403)

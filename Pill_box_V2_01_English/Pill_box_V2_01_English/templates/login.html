@@ -11,20 +11,20 @@
             <form method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3">
-                    <label class="form-label">Usernameor Email</label>
-                    <input type="text" name="account" class="form-control" placeholder="Enter username or email" required>
+                    <label class="form-label">Username or Email</label>
+                    <input type="text" name="account" class="form-control" placeholder="Enter username or email" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Password</label>
-                    <input type="password" name="password" class="form-control" placeholder="Enter password" required>
+                    <input type="password" name="password" class="form-control" placeholder="Enter password" autocomplete="current-password" required>
                 </div>
 
                 <button type="submit" class="btn btn-primary w-100">Log In</button>
             </form>
 
             <p class="text-center mt-3 mb-0">
-                Don’t have an account?
+                Don't have an account?
                 <a href="{{ url_for('register') }}">Register Now</a>
             </p>
         </div>
