@@ -1,5 +1,35 @@
 C:\Users\Jianl\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\flask_limiter\extension.py:336: UserWarning: Using the in-memory storage for tracking rate limits as no storage was explicitly specified. This is not recommended for production use. See: https://flask-limiter.readthedocs.io#configuring-a-storage-backend for documentation about configuring the storage backend.
   warnings.warn(
-2026-05-14 14:12:39,072 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+2026-05-15 13:30:10,496 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:5000
-2026-05-14 14:12:39,072 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-05-15 13:30:10,496 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-05-15 13:30:28,650 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:30:28] "GET /login HTTP/1.1" 200 -
+2026-05-15 13:30:51,807 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:30:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:31:51,794 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:31:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:32:51,797 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:32:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:33:51,800 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:33:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:34:51,818 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:34:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:35:51,817 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:35:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:36:51,798 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:36:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:37:51,810 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:37:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:38:51,803 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:38:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:39:51,795 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:39:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:40:51,796 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:40:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:41:51,801 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:41:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:42:51,793 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:42:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:43:51,808 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:43:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:44:51,795 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:44:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:45:51,806 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:45:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:46:51,792 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:46:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:47:51,795 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:47:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:48:51,797 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:48:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:49:10,342 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:49:10] "GET /login HTTP/1.1" 200 -
+2026-05-15 13:49:51,792 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:49:51] "GET /api/face-unlock/status HTTP/1.1" 200 -
+2026-05-15 13:50:26,340 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:26] "GET / HTTP/1.1" 200 -
+2026-05-15 13:50:26,965 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:26] "GET /static/css/custom.css HTTP/1.1" 200 -
+2026-05-15 13:50:27,037 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:27] "GET /static/js/main.js HTTP/1.1" 200 -
+2026-05-15 13:50:27,049 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:27] "GET /static/manifest.json HTTP/1.1" 200 -
+2026-05-15 13:50:27,516 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:27] "GET /static/images/promo_vitamin_c.png HTTP/1.1" 200 -
+2026-05-15 13:50:30,751 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:30] "[36mGET /static/images/promo_fish_oil.png HTTP/1.1[0m" 304 -
+2026-05-15 13:50:33,939 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:33] "[36mGET /static/images/promo_gut_health.png HTTP/1.1[0m" 304 -
+2026-05-15 13:50:51,806 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:50:51] "GET /api/face-unlock/status HTTP/1.1" 200 -

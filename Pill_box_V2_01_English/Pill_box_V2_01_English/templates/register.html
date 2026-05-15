@@ -12,32 +12,32 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3">
                     <label class="form-label">Username</label>
-                    <input type="text" name="username" class="form-control" placeholder="Enter username" required>
+                    <input type="text" name="username" class="form-control" placeholder="Enter username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Email</label>
-                    <input type="email" name="email" class="form-control" placeholder="Enter email" required>
+                    <input type="email" name="email" class="form-control" placeholder="Enter email" autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false" required>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Password</label>
-                    <input type="password" name="password" class="form-control" placeholder="At least 6 characters" required>
+                    <input type="password" name="password" class="form-control" placeholder="At least 6 characters" autocomplete="new-password" required>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Confirm Password</label>
-                    <input type="password" name="confirm_password" class="form-control" placeholder="Confirm password" required>
+                    <input type="password" name="confirm_password" class="form-control" placeholder="Confirm password" autocomplete="new-password" required>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Pill Box Unlock Password</label>
-                    <input type="password" name="unlock_password" class="form-control" placeholder="At least 4 characters" required>
+                    <input type="password" name="unlock_password" class="form-control" placeholder="At least 4 characters" autocomplete="new-password" required>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Confirm Pill Box Unlock Password</label>
-                    <input type="password" name="confirm_unlock_password" class="form-control" placeholder="Confirm pill box unlock password" required>
+                    <input type="password" name="confirm_unlock_password" class="form-control" placeholder="Confirm pill box unlock password" autocomplete="new-password" required>
                 </div>
 
                 <div class="mb-3">

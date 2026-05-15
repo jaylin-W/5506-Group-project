@@ -49,9 +49,10 @@ using eloq::face::recognition;
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
-// ESP32S3 is on the same WiFi as the laptop, so use the laptop LAN URL.
-// If the laptop IP changes, update this value before uploading the sketch.
-const char* SERVER_BASE_URL = "http://172.20.10.2:5506";
+// Single-server test mode:
+// Use the same HTTPS ngrok URL that the phone opens. Ngrok forwards it to Flask on 127.0.0.1:5000.
+// If ngrok prints a new URL after restart, update this value before uploading the sketch.
+const char* SERVER_BASE_URL = "https://panning-snagged-constrict.ngrok-free.dev";
 const char* DEVICE_API_TOKEN = "5506-local-device-token";
 const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
 
