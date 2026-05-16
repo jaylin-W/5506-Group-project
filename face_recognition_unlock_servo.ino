@@ -16,6 +16,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <esp_sleep.h>
 #include <string.h>
 
 #include <eloquent_esp32cam.h>
@@ -40,6 +41,7 @@ using eloq::face::recognition;
 
 #define BUZZER_PIN      44
 #define BUTTON_PIN      9
+#define IR_SENSOR_PIN   8
 
 
 // =====================
@@ -59,6 +61,8 @@ const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 const unsigned long DEVICE_STATUS_POLL_MS = 3000;
 const unsigned long DEVICE_REMINDER_POLL_MS = 15000;
+const int MIN_DEEP_SLEEP_SECONDS = 60;
+const int DEEP_SLEEP_WAKE_MARGIN_SECONDS = 5;
 
 String lastSeenRemoteUnlockAt = "";
 unsigned long lastDeviceStatusPoll = 0;
@@ -67,6 +71,10 @@ String activeReminderKey = "";
 String completedReminderKey = "";
 String activeReminderLabel = "";
 String activeReminderTime = "";
+int activeTargetQuantity = 1;
+int activeTakenQuantity = 0;
+unsigned long dispensingStartTime = 0;
+unsigned long activeDispenseTimeoutMs = 10UL * 60UL * 1000UL;
 
 
 // =====================
@@ -102,6 +110,9 @@ const unsigned long DEBOUNCE_MS = 50;
 bool lastButtonReading = HIGH;
 bool stableButtonState = HIGH;
 unsigned long lastDebounceTime = 0;
+bool lastIrReading = HIGH;
+unsigned long lastIrTriggerTime = 0;
+const unsigned long IR_DEBOUNCE_MS = 250;
 
 
 // =====================
@@ -121,6 +132,7 @@ enum SystemState {
   REMINDER_BUZZING,
   FACE_VERIFYING,
   FACE_SUCCESS,
+  DISPENSING,
   FACE_FAILED,
   FACE_REMOTE_UNLOCK_WAITING
 };
@@ -147,7 +159,9 @@ void unlockServo() {
 }
 
 void updateServoAutoLock() {
-  if (servoUnlocked && millis() - servoUnlockStartTime >= SERVO_UNLOCK_TIME_MS) {
+  if (servoUnlocked
+      && currentState != DISPENSING
+      && millis() - servoUnlockStartTime >= SERVO_UNLOCK_TIME_MS) {
     lockServo();
     if (currentState == FACE_SUCCESS) {
       allLightsOff();
@@ -251,6 +265,19 @@ bool buttonPressedOnce() {
   return false;
 }
 
+bool medicationPassedIrOnce() {
+  bool reading = digitalRead(IR_SENSOR_PIN);
+  bool triggered = false;
+
+  if (lastIrReading == HIGH && reading == LOW && millis() - lastIrTriggerTime > IR_DEBOUNCE_MS) {
+    lastIrTriggerTime = millis();
+    triggered = true;
+  }
+
+  lastIrReading = reading;
+  return triggered;
+}
+
 
 // =====================
 // Website API functions
@@ -314,6 +341,8 @@ String devicePayload(const char* eventName) {
     payload += ",\"reminder_key\":\"";
     payload += activeReminderKey;
     payload += "\"";
+    payload += ",\"taken_quantity\":";
+    payload += String(activeTakenQuantity);
   }
   payload += "}";
   return payload;
@@ -450,15 +479,97 @@ bool completeActiveReminderOnWebsite() {
   activeReminderKey = "";
   activeReminderLabel = "";
   activeReminderTime = "";
+  activeTargetQuantity = 1;
+  activeTakenQuantity = 0;
+  dispensingStartTime = 0;
+  activeDispenseTimeoutMs = 10UL * 60UL * 1000UL;
   return true;
+}
+
+void enterDeepSleepForSeconds(int seconds) {
+  int sleepSeconds = max(MIN_DEEP_SLEEP_SECONDS, seconds - DEEP_SLEEP_WAKE_MARGIN_SECONDS);
+  Serial.print("No active reminder. Entering deep sleep for ");
+  Serial.print(sleepSeconds);
+  Serial.println(" seconds.");
+  Serial.flush();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
+  esp_deep_sleep_start();
+}
+
+bool reportMedicationDispensedToWebsite() {
+  if (activeReminderKey.length() == 0) {
+    return false;
+  }
+
+  int httpCode = -1;
+  String response = postToWebsite("/api/device/medication-dispensed", devicePayload("medication_dispensed"), httpCode);
+  if (httpCode != 200 || response.length() == 0) {
+    return false;
+  }
+
+  activeTakenQuantity = jsonIntValue(response, "taken_quantity", activeTakenQuantity);
+  activeTargetQuantity = jsonIntValue(response, "target_quantity", activeTargetQuantity);
+
+  Serial.print("IR count synced: ");
+  Serial.print(activeTakenQuantity);
+  Serial.print(" / ");
+  Serial.println(activeTargetQuantity);
+  return jsonBoolValue(response, "completed", activeTakenQuantity >= activeTargetQuantity);
+}
+
+bool reportDispenseTimeoutToWebsite() {
+  if (activeReminderKey.length() == 0) {
+    return false;
+  }
+
+  int httpCode = -1;
+  String response = postToWebsite("/api/device/reminder-timeout", devicePayload("dispense_timeout"), httpCode);
+  return httpCode == 200 && response.length() > 0;
+}
+
+void resetActiveReminderLocally() {
+  completedReminderKey = activeReminderKey;
+  activeReminderKey = "";
+  activeReminderLabel = "";
+  activeReminderTime = "";
+  activeTargetQuantity = 1;
+  activeTakenQuantity = 0;
+  dispensingStartTime = 0;
+  activeDispenseTimeoutMs = 10UL * 60UL * 1000UL;
+}
+
+void startDispensingFlow() {
+  dispensingStartTime = millis();
+  currentState = DISPENSING;
+}
+
+void finishDispensingFlow() {
+  completeActiveReminderOnWebsite();
+  lockServo();
+  allLightsOff();
+  currentState = REMINDER_IDLE;
+  lastReminderPoll = 0;
+  Serial.println("Dose quantity reached. Servo locked. Waiting for the next database reminder.");
+}
+
+void timeoutDispensingFlow() {
+  Serial.println("Dispense timeout reached. No enough medication passed the IR sensor.");
+  reportDispenseTimeoutToWebsite();
+  lockServo();
+  allLightsOff();
+  resetActiveReminderLocally();
+  currentState = REMINDER_IDLE;
+  lastReminderPoll = 0;
+  Serial.println("Reminder marked missed. Waiting for the next database reminder or deep sleep window.");
 }
 
 void continueAfterWebsitePinUnlock() {
   Serial.println("Website PIN confirmed. Continuing pill box unlock flow.");
   showVerificationSuccess();
   unlockServo();
-  completeActiveReminderOnWebsite();
-  currentState = FACE_SUCCESS;
+  startDispensingFlow();
 }
 
 bool pollReminderState() {
@@ -470,6 +581,8 @@ bool pollReminderState() {
 
   String action = jsonStringValue(response, "device_action");
   String reminderKey = jsonStringValue(response, "reminder_key");
+  bool sleepRecommended = jsonBoolValue(response, "sleep_recommended", false);
+  int secondsUntilNextWindow = jsonIntValue(response, "seconds_until_next_window", 0);
 
   if (action == "wait_for_pin") {
     if (currentState == REMINDER_IDLE || currentState == FACE_FAILED) {
@@ -489,6 +602,9 @@ bool pollReminderState() {
       activeReminderKey = reminderKey;
       activeReminderLabel = jsonStringValue(response, "supplement_name");
       activeReminderTime = jsonStringValue(response, "take_time");
+      activeTargetQuantity = jsonIntValue(response, "target_quantity", jsonIntValue(response, "dose_quantity", 1));
+      activeTakenQuantity = jsonIntValue(response, "taken_quantity", 0);
+      activeDispenseTimeoutMs = (unsigned long) jsonIntValue(response, "dispense_timeout_seconds", 600) * 1000UL;
       currentState = REMINDER_BUZZING;
       startBuzzer();
 
@@ -498,6 +614,10 @@ bool pollReminderState() {
       Serial.print(activeReminderLabel.length() > 0 ? activeReminderLabel : "Supplement");
       Serial.print(" at ");
       Serial.println(activeReminderTime.length() > 0 ? activeReminderTime : "scheduled time");
+      Serial.print("Dose quantity target: ");
+      Serial.println(activeTargetQuantity);
+      Serial.print("Dispense timeout seconds: ");
+      Serial.println(activeDispenseTimeoutMs / 1000UL);
       Serial.println("Buzzer is ringing. Press button to start face detection.");
     }
     return true;
@@ -505,6 +625,9 @@ bool pollReminderState() {
 
   if (action == "idle" && currentState == REMINDER_IDLE) {
     Serial.println("No database reminder is due now.");
+    if (sleepRecommended && secondsUntilNextWindow >= MIN_DEEP_SLEEP_SECONDS) {
+      enterDeepSleepForSeconds(secondsUntilNextWindow);
+    }
   }
 
   return true;
@@ -569,7 +692,6 @@ bool reportFaceFailureToWebsite() {
 void reportFaceSuccessToWebsite() {
   int httpCode = -1;
   postToWebsite("/api/face-unlock/success", devicePayload("face_success"), httpCode);
-  completeActiveReminderOnWebsite();
 }
 
 void handleFaceFailureResult() {
@@ -659,6 +781,7 @@ void setup() {
 
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
 
   allLightsOff();
   digitalWrite(BUZZER_PIN, LOW);
@@ -735,6 +858,25 @@ void loop() {
     refreshDeviceStatus(false);
   }
 
+  if (currentState == DISPENSING && medicationPassedIrOnce()) {
+    activeTakenQuantity++;
+    Serial.print("IR detected medication passing: ");
+    Serial.print(activeTakenQuantity);
+    Serial.print(" / ");
+    Serial.println(activeTargetQuantity);
+
+    bool completed = reportMedicationDispensedToWebsite();
+    if (completed || activeTakenQuantity >= activeTargetQuantity) {
+      finishDispensingFlow();
+    }
+  }
+
+  if (currentState == DISPENSING
+      && dispensingStartTime > 0
+      && millis() - dispensingStartTime >= activeDispenseTimeoutMs) {
+    timeoutDispensingFlow();
+  }
+
   if (buttonPressedOnce()) {
     Serial.println();
     Serial.println("Button pressed.");
@@ -752,9 +894,9 @@ void loop() {
       bool passed = runFaceVerification();
 
       if (passed) {
-        currentState = FACE_SUCCESS;
+        startDispensingFlow();
         reportFaceSuccessToWebsite();
-        Serial.println("Green LED ON. Verification success. Servo unlocked.");
+        Serial.println("Green LED ON. Verification success. Servo unlocked. Waiting for IR medication count.");
       } else {
         handleFaceFailureResult();
       }
@@ -768,16 +910,19 @@ void loop() {
       bool passed = runFaceVerification();
 
       if (passed) {
-        currentState = FACE_SUCCESS;
+        startDispensingFlow();
         reportFaceSuccessToWebsite();
-        Serial.println("Green LED ON. Verification success. Servo unlocked.");
+        Serial.println("Green LED ON. Verification success. Servo unlocked. Waiting for IR medication count.");
       } else {
         handleFaceFailureResult();
       }
     }
 
-    else if (currentState == FACE_SUCCESS) {
-      Serial.println("Already verified.");
+    else if (currentState == FACE_SUCCESS || currentState == DISPENSING) {
+      Serial.print("Already verified. Waiting for IR count ");
+      Serial.print(activeTakenQuantity);
+      Serial.print(" / ");
+      Serial.println(activeTargetQuantity);
     }
 
     else if (currentState == FACE_REMOTE_UNLOCK_WAITING) {
