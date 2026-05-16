@@ -13,7 +13,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from email_validator import validate_email, EmailNotValidError
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as datetime_time
 from io import BytesIO
 import sqlite3
 import os
@@ -52,6 +52,11 @@ app.config["VAPID_CLAIMS_SUB"] = os.environ.get("VAPID_CLAIMS_SUB", "mailto:admi
 app.config["FACE_ENROLLMENT_REQUESTED_SAMPLES"] = 3
 app.config["FACE_ENROLLMENT_WINDOW_MINUTES"] = 5
 app.config["FACE_ENROLLMENT_MAX_PHOTO_BYTES"] = 700 * 1024
+try:
+    DISPENSING_TIMEOUT_SECONDS = max(60, int(os.environ.get("DISPENSING_TIMEOUT_SECONDS", "600")))
+except ValueError:
+    DISPENSING_TIMEOUT_SECONDS = 600
+app.config["DISPENSING_TIMEOUT_SECONDS"] = DISPENSING_TIMEOUT_SECONDS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -113,6 +118,7 @@ TIME_OPTIONS = [
 ]
 
 WINDOW_OPTIONS = list(range(5, 65, 5))
+DOSE_QUANTITY_OPTIONS = list(range(1, 11))
 
 PRODUCT_CODE_EXAMPLE = "5506xxx"
 DEFAULT_PRODUCT_CODE = "5506123"
@@ -266,6 +272,16 @@ def validate_age(age_str):
         return False, "Age must be a number."
 
 
+def validate_dose_quantity(quantity_str):
+    try:
+        quantity = int(quantity_str)
+    except (TypeError, ValueError):
+        return False, "Dose quantity must be a number."
+    if quantity < 1 or quantity > 10:
+        return False, "Dose quantity must be between 1 and 10."
+    return True, quantity
+
+
 def ensure_column(conn, table_name, column_name, column_sql):
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
     if column_name not in columns:
@@ -335,12 +351,14 @@ def init_db():
             supplement_name TEXT NOT NULL,
             take_time TEXT NOT NULL,
             time_window INTEGER NOT NULL,
+            target_quantity INTEGER NOT NULL DEFAULT 1,
             note TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES user(id)
         )
         """
     )
+    ensure_column(conn, "supplement_schedule", "target_quantity", "target_quantity INTEGER NOT NULL DEFAULT 1")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS push_subscription (
@@ -385,14 +403,20 @@ def init_db():
             reminder_key TEXT UNIQUE NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             device_id TEXT,
+            target_quantity INTEGER NOT NULL DEFAULT 1,
+            taken_quantity INTEGER NOT NULL DEFAULT 0,
             triggered_at TEXT NOT NULL,
             completed_at TEXT,
+            missed_at TEXT,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES user(id),
             FOREIGN KEY (schedule_id) REFERENCES supplement_schedule(id)
         )
         """
     )
+    ensure_column(conn, "device_reminder_event", "target_quantity", "target_quantity INTEGER NOT NULL DEFAULT 1")
+    ensure_column(conn, "device_reminder_event", "taken_quantity", "taken_quantity INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "device_reminder_event", "missed_at", "missed_at TEXT")
     conn.execute(
         """
         UPDATE user
@@ -526,7 +550,7 @@ def get_user_schedules(user_id):
     conn = get_db_connection()
     rows = conn.execute(
         """
-        SELECT id, supplement_name, take_time, time_window, note, created_at
+        SELECT id, supplement_name, take_time, time_window, target_quantity, note, created_at
         FROM supplement_schedule
         WHERE user_id = ?
         ORDER BY take_time ASC, id DESC
@@ -535,6 +559,20 @@ def get_user_schedules(user_id):
     ).fetchall()
     conn.close()
     return rows
+
+
+def get_missed_reminder_count(user_id):
+    conn = get_db_connection()
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS missed_count
+        FROM device_reminder_event
+        WHERE user_id = ? AND status = 'missed'
+        """,
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row["missed_count"] if row else 0
 
 
 def local_now():
@@ -554,6 +592,23 @@ def circular_minute_distance(left, right):
     return min(distance, 24 * 60 - distance)
 
 
+def next_window_start_at(schedule, now):
+    scheduled_minutes = parse_take_time_minutes(schedule["take_time"])
+    if scheduled_minutes is None:
+        return None
+
+    window_start_minutes = (scheduled_minutes - int(schedule["time_window"])) % (24 * 60)
+    wake_hour = window_start_minutes // 60
+    wake_minute = window_start_minutes % 60
+    for day_offset in range(2):
+        wake_date = now.date() + timedelta(days=day_offset)
+        wake_time = datetime_time(wake_hour, wake_minute)
+        wake_at = datetime.combine(wake_date, wake_time, tzinfo=now.tzinfo)
+        if wake_at > now:
+            return wake_at
+    return None
+
+
 def serialize_schedule_for_device(row, now=None):
     now = now or local_now()
     scheduled_minutes = parse_take_time_minutes(row["take_time"])
@@ -571,6 +626,8 @@ def serialize_schedule_for_device(row, now=None):
         "supplement_name": row["supplement_name"],
         "take_time": row["take_time"],
         "time_window": row["time_window"],
+        "target_quantity": row["target_quantity"],
+        "dose_quantity": row["target_quantity"],
         "note": row["note"],
         "is_due": is_due,
         "minutes_from_target": minutes_from_target,
@@ -581,7 +638,7 @@ def get_device_reminder_event(user_id, reminder_key):
     conn = get_db_connection()
     row = conn.execute(
         """
-        SELECT id, status, completed_at
+        SELECT id, status, completed_at, missed_at, taken_quantity, target_quantity
         FROM device_reminder_event
         WHERE user_id = ? AND reminder_key = ?
         """,
@@ -598,10 +655,11 @@ def record_device_reminder_event(user_id, reminder, device_id=None):
         conn.execute(
             """
             INSERT INTO device_reminder_event
-            (user_id, schedule_id, reminder_key, status, device_id, triggered_at, updated_at)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?)
+            (user_id, schedule_id, reminder_key, status, device_id, target_quantity, taken_quantity, triggered_at, updated_at)
+            VALUES (?, ?, ?, 'pending', ?, ?, 0, ?, ?)
             ON CONFLICT(reminder_key) DO UPDATE SET
                 device_id = COALESCE(excluded.device_id, device_reminder_event.device_id),
+                target_quantity = excluded.target_quantity,
                 updated_at = excluded.updated_at
             """,
             (
@@ -609,6 +667,7 @@ def record_device_reminder_event(user_id, reminder, device_id=None):
                 reminder["schedule_id"],
                 reminder["reminder_key"],
                 device_id,
+                reminder["target_quantity"],
                 now,
                 now,
             ),
@@ -618,7 +677,7 @@ def record_device_reminder_event(user_id, reminder, device_id=None):
         conn.close()
 
 
-def complete_device_reminder_event(user_id, reminder_key, device_id=None):
+def complete_device_reminder_event(user_id, reminder_key, device_id=None, taken_quantity=None):
     now = utc_now_iso()
     conn = get_db_connection()
     try:
@@ -628,10 +687,33 @@ def complete_device_reminder_event(user_id, reminder_key, device_id=None):
             SET status = 'completed',
                 completed_at = COALESCE(completed_at, ?),
                 updated_at = ?,
-                device_id = COALESCE(?, device_id)
+                device_id = COALESCE(?, device_id),
+                taken_quantity = COALESCE(?, taken_quantity, target_quantity)
             WHERE user_id = ? AND reminder_key = ?
             """,
-            (now, now, device_id, user_id, reminder_key),
+            (now, now, device_id, taken_quantity, user_id, reminder_key),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def mark_device_reminder_timeout(user_id, reminder_key, device_id=None, taken_quantity=0):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            """
+            UPDATE device_reminder_event
+            SET status = 'missed',
+                missed_at = COALESCE(missed_at, ?),
+                updated_at = ?,
+                device_id = COALESCE(?, device_id),
+                taken_quantity = COALESCE(?, taken_quantity, 0)
+            WHERE user_id = ? AND reminder_key = ?
+            """,
+            (now, now, device_id, taken_quantity, user_id, reminder_key),
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -649,7 +731,7 @@ def get_device_reminder_state(user_id, device_id=None):
     if due_schedules:
         candidate = due_schedules[0]
         event = get_device_reminder_event(user_id, candidate["reminder_key"])
-        if event is None or event["status"] != "completed":
+        if event is None or event["status"] not in ("completed", "missed"):
             record_device_reminder_event(user_id, candidate, device_id)
             active_reminder = candidate
 
@@ -661,24 +743,44 @@ def get_device_reminder_state(user_id, device_id=None):
         device_action = "ring_reminder"
 
     next_reminder = None
+    next_wake_at = None
     if schedules:
-        next_reminder = sorted(
-            schedules,
-            key=lambda schedule: (
-                schedule["minutes_from_target"] if schedule["minutes_from_target"] is not None else 24 * 60,
-                schedule["take_time"],
-                schedule["schedule_id"],
-            ),
-        )[0]
+        future_wakes = [
+            (next_window_start_at(schedule, now), schedule)
+            for schedule in schedules
+        ]
+        future_wakes = [(wake_at, schedule) for wake_at, schedule in future_wakes if wake_at is not None]
+        if future_wakes:
+            next_wake_at, next_reminder = min(future_wakes, key=lambda item: item[0])
 
-    return {
+    sleep_seconds = 0
+    if device_action == "idle" and next_wake_at is not None:
+        sleep_seconds = max(1, int((next_wake_at - now).total_seconds()))
+
+    state = {
         "device_action": device_action,
         "server_time": now.isoformat(timespec="seconds"),
         "active_reminder": active_reminder,
         "next_reminder": next_reminder,
+        "next_wake_at": next_wake_at.isoformat(timespec="seconds") if next_wake_at else None,
+        "sleep_seconds": sleep_seconds,
+        "dispensing_timeout_seconds": app.config["DISPENSING_TIMEOUT_SECONDS"],
         "schedules": schedules,
         "face_unlock": face_status,
     }
+    if active_reminder:
+        state.update(
+            {
+                "reminder_key": active_reminder["reminder_key"],
+                "schedule_id": active_reminder["schedule_id"],
+                "supplement_name": active_reminder["supplement_name"],
+                "take_time": active_reminder["take_time"],
+                "time_window": active_reminder["time_window"],
+                "target_quantity": active_reminder["target_quantity"],
+                "dose_quantity": active_reminder["dose_quantity"],
+            }
+        )
+    return state
 
 
 def utc_now_iso():
@@ -1416,8 +1518,54 @@ def device_reminder_complete():
     if not reminder_key:
         return jsonify({"error": "Missing reminder_key."}), 400
 
-    completed = complete_device_reminder_event(user_id, reminder_key, payload.get("device_id"))
-    return jsonify({"ok": completed, "reminder_key": reminder_key})
+    taken_quantity = payload.get("taken_quantity")
+    try:
+        taken_quantity = int(taken_quantity) if taken_quantity is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "taken_quantity must be a number."}), 400
+
+    completed = complete_device_reminder_event(
+        user_id,
+        reminder_key,
+        payload.get("device_id"),
+        taken_quantity,
+    )
+    return jsonify({"ok": completed, "reminder_key": reminder_key, "status": "completed"})
+
+
+@app.route("/api/device/reminder-timeout", methods=["POST"])
+@csrf.exempt
+@limiter.limit("10000 per hour", override_defaults=True)
+def device_reminder_timeout():
+    payload = get_device_payload()
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        return jsonify({"error": message}), status_code
+
+    reminder_key = (payload.get("reminder_key") or "").strip()
+    if not reminder_key:
+        return jsonify({"error": "Missing reminder_key."}), 400
+
+    try:
+        taken_quantity = max(0, int(payload.get("taken_quantity") or 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "taken_quantity must be a number."}), 400
+
+    missed = mark_device_reminder_timeout(
+        user_id,
+        reminder_key,
+        payload.get("device_id"),
+        taken_quantity,
+    )
+    return jsonify(
+        {
+            "ok": missed,
+            "reminder_key": reminder_key,
+            "status": "missed",
+            "taken_quantity": taken_quantity,
+        }
+    )
 
 
 @app.route("/api/face-unlock/failure", methods=["POST"])
@@ -1786,6 +1934,7 @@ def profile():
             supplement_name = request.form.get("supplement_name", "").strip()
             take_time = request.form.get("take_time", "").strip()
             time_window = request.form.get("time_window", "").strip()
+            target_quantity = request.form.get("target_quantity", "").strip()
             note = request.form.get("note", "").strip()
 
             if supplement_name not in SUPPLEMENT_OPTIONS:
@@ -1802,16 +1951,27 @@ def profile():
             if time_window_value not in WINDOW_OPTIONS:
                 flash("Please select a valid allowed time window.", "danger")
                 return redirect(url_for("profile"))
+            valid, target_quantity_value = validate_dose_quantity(target_quantity)
+            if not valid:
+                flash(target_quantity_value, "danger")
+                return redirect(url_for("profile"))
 
             conn = get_db_connection()
             try:
                 conn.execute(
                     """
                     INSERT INTO supplement_schedule
-                    (user_id, supplement_name, take_time, time_window, note)
-                    VALUES (?, ?, ?, ?, ?)
+                    (user_id, supplement_name, take_time, time_window, target_quantity, note)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (current_user.id, supplement_name, take_time, time_window_value, note or None),
+                    (
+                        current_user.id,
+                        supplement_name,
+                        take_time,
+                        time_window_value,
+                        target_quantity_value,
+                        note or None,
+                    ),
                 )
                 conn.commit()
                 logger.info(f"User {current_user.username} added schedule: {supplement_name} {take_time}")
@@ -1826,13 +1986,16 @@ def profile():
             return redirect(url_for("profile"))
 
     schedules = get_user_schedules(current_user.id)
+    missed_reminder_count = get_missed_reminder_count(current_user.id)
     latest_face_enrollment = get_latest_face_enrollment_for_user(current_user.id)
     return render_template(
         "profile.html",
         supplement_options=SUPPLEMENT_OPTIONS,
         time_options=TIME_OPTIONS,
         window_options=WINDOW_OPTIONS,
+        dose_quantity_options=DOSE_QUANTITY_OPTIONS,
         schedules=schedules,
+        missed_reminder_count=missed_reminder_count,
         security_questions=get_security_questions(),
         security_question_text=SECURITY_QUESTION_LABELS.get(current_user.security_question),
         product_code_example=PRODUCT_CODE_EXAMPLE,

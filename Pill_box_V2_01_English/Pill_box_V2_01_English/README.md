@@ -8,6 +8,7 @@ This is the English version of **Pill box V2.01**.
 - Register, login, logout, and profile pages
 - Personal supplement schedule management
 - Users can select supplement names, intake time, and allowed time window
+- Users can set a dose quantity for each supplement schedule
 - Intake time options are spaced every 30 minutes
 - Allowed time windows are spaced every 5 minutes
 - Four auto-rotating advertisement cards on the home page
@@ -108,7 +109,7 @@ const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* SERVER_BASE_URL = "https://your-ngrok-url.ngrok-free.dev";
 const char* DEVICE_API_TOKEN = "5506-local-device-token";
-const char* PRODUCT_CODE = "5506123";
+const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
 ```
 
 The same device token must exist in `.env`:
@@ -120,10 +121,14 @@ DEVICE_API_TOKEN=5506-local-device-token
 Hardware flow:
 
 ```text
-Face success -> ESP32 unlocks servo -> website failure counter is reset
+Due schedule -> ESP32 buzzer prompts the user
+Face success or website PIN unlock -> ESP32 unlocks servo and enters DISPENSING
+DISPENSING waits up to 600 seconds for the IR sensor to count the configured Dose Quantity
+Dose Quantity reached -> ESP32 POSTs /api/device/reminder-complete and locks the servo
+Timeout or insufficient quantity -> ESP32 POSTs /api/device/reminder-timeout, website marks the record missed, and servo locks
 Face failure -> ESP32 POSTs /api/face-unlock/failure with product_code 5506123
 After 3 failures -> website sends phone Web Push notification
-User enters pill box unlock password on website -> ESP32 polls /api/face-unlock/device-status and unlocks servo
+User enters pill box unlock password on website -> ESP32 polls /api/face-unlock/device-status and enters DISPENSING
 ```
 
 Face enrollment flow:

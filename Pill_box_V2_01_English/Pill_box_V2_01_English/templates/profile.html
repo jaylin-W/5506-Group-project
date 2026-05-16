@@ -201,6 +201,16 @@
         </div>
 
         <div class="col-md-3 schedule-field">
+            <label class="form-label">Dose Quantity</label>
+            <select name="target_quantity" class="form-select" required>
+                {% for item in dose_quantity_options %}
+                    <option value="{{ item }}">{{ item }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">The ESP waits until the IR sensor counts this many pills.</div>
+        </div>
+
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Note</label>
             <input type="text" name="note" class="form-control" placeholder="Example: take after meals">
         </div>
@@ -222,6 +232,7 @@
                         <th>Supplement / Pill</th>
                         <th>Intake Time</th>
                         <th>Allowed Window</th>
+                        <th>Dose Quantity</th>
                         <th>Note</th>
                         <th>Created At</th>
                         <th style="width: 100px;">Action</th>
@@ -233,6 +244,7 @@
                             <td>{{ item.supplement_name }}</td>
                             <td>{{ item.take_time }}</td>
                             <td>+/-{{ item.time_window }} minutes</td>
+                            <td>{{ item.target_quantity }}</td>
                             <td>{{ item.note or "None" }}</td>
                             <td>{{ item.created_at }}</td>
                             <td>
@@ -262,7 +274,7 @@
         </div>
         <div class="col-md-4">
             <div class="stat-card">
-                <h3>0</h3>
+                <h3>{{ missed_reminder_count }}</h3>
                 <p>Missed Records</p>
             </div>
         </div>
