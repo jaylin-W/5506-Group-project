@@ -77,7 +77,7 @@
                 <div class="mb-3">
                     <label class="form-label">Product Unlock Code</label>
                     <input type="text" name="product_code" class="form-control" value="{{ current_user.product_code or '' }}" placeholder="{{ default_product_code }}">
-                    <div class="form-text">Example format: {{ product_code_example }}. Your product code: {{ default_product_code }}.</div>
+                    <div class="form-text">After linking a product code for the first time, the page will open the guided face enrollment flow.</div>
                 </div>
 
                 <div class="mb-3">
@@ -168,7 +168,7 @@
         <input type="hidden" name="form_type" value="schedule">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-        <div class="col-md-3 schedule-field">
+        <div class="col-md-2 schedule-field">
             <label class="form-label">Select Supplement / Pill</label>
             <select name="supplement_name" class="form-select" required>
                 <option value="">Please select</option>
@@ -178,7 +178,7 @@
             </select>
         </div>
 
-        <div class="col-md-3 schedule-field">
+        <div class="col-md-2 schedule-field">
             <label class="form-label">Select Intake Time</label>
             <select name="take_time" class="form-select" required>
                 <option value="">Please select</option>
@@ -198,6 +198,16 @@
                 {% endfor %}
             </select>
             <div class="form-text">Window options are spaced every 5 minutes, such as +/-5, +/-10, and +/-15.</div>
+        </div>
+
+        <div class="col-md-2 schedule-field">
+            <label class="form-label">Dose Quantity</label>
+            <select name="dose_quantity" class="form-select" required>
+                {% for item in dose_quantity_options %}
+                    <option value="{{ item }}">{{ item }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">IR sensor count target for this dose.</div>
         </div>
 
         <div class="col-md-3 schedule-field">
@@ -222,6 +232,7 @@
                         <th>Supplement / Pill</th>
                         <th>Intake Time</th>
                         <th>Allowed Window</th>
+                        <th>Dose Quantity</th>
                         <th>Note</th>
                         <th>Created At</th>
                         <th style="width: 100px;">Action</th>
@@ -233,6 +244,7 @@
                             <td>{{ item.supplement_name }}</td>
                             <td>{{ item.take_time }}</td>
                             <td>+/-{{ item.time_window }} minutes</td>
+                            <td>{{ item.dose_quantity }}</td>
                             <td>{{ item.note or "None" }}</td>
                             <td>{{ item.created_at }}</td>
                             <td>

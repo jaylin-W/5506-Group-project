@@ -6,7 +6,7 @@ echo =====================================
 echo Pill Box PWA Notification Test
 echo =====================================
 echo.
-echo This starts Flask with Python 3.11 and opens an ngrok HTTPS tunnel.
+echo This starts Flask with Python 3.12 and opens an ngrok HTTPS tunnel.
 echo Use the HTTPS ngrok URL on your phone.
 echo.
 

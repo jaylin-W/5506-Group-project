@@ -3,9 +3,12 @@
 $ErrorActionPreference = "Stop"
 
 $Port = 5000
+$PythonVersion = "3.12"
 $AppDir = Join-Path $PSScriptRoot "Pill_box_V2_01_English\Pill_box_V2_01_English"
 $OutLog = Join-Path $PSScriptRoot "flask-ngrok.out.log"
 $ErrLog = Join-Path $PSScriptRoot "flask-ngrok.err.log"
+$LocalNgrok = Join-Path $PSScriptRoot "ngrok.exe"
+$NgrokCommand = if (Test-Path $LocalNgrok) { $LocalNgrok } else { "ngrok" }
 
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "Pill Box PWA Notification Test" -ForegroundColor Cyan
@@ -17,17 +20,17 @@ if (-not (Test-Path (Join-Path $AppDir "app.py"))) {
     exit 1
 }
 
-Write-Host "Checking Python 3.11 app environment..." -ForegroundColor Yellow
+Write-Host "Checking Python $PythonVersion app environment..." -ForegroundColor Yellow
 Push-Location $AppDir
 try {
-    & py -3.11 -c "import app; print('web_push_configured=' + str(app.can_send_web_push()))"
+    & py "-$PythonVersion" -c "import app; print('web_push_configured=' + str(app.can_send_web_push()))"
 } finally {
     Pop-Location
 }
 
 Write-Host ""
 Write-Host "Checking ngrok..." -ForegroundColor Yellow
-& ngrok --version
+& $NgrokCommand --version
 
 $existingPort = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($existingPort) {
@@ -39,7 +42,7 @@ if ($existingPort) {
 
 Write-Host ""
 Write-Host "Starting Flask on http://127.0.0.1:$Port ..." -ForegroundColor Yellow
-$flaskArgs = @("-3.11", "-m", "flask", "--app", "app", "run", "--host", "127.0.0.1", "--port", "$Port")
+$flaskArgs = @("-$PythonVersion", "-m", "flask", "--app", "app", "run", "--host", "127.0.0.1", "--port", "$Port")
 $flaskProcess = Start-Process -WindowStyle Hidden -FilePath "py" -ArgumentList $flaskArgs -WorkingDirectory $AppDir -RedirectStandardOutput $OutLog -RedirectStandardError $ErrLog -PassThru
 
 try {
@@ -53,7 +56,7 @@ try {
     Write-Host "Use Send Test Notification from the desktop page to test background push." -ForegroundColor Green
     Write-Host ""
 
-    & ngrok http "http://127.0.0.1:$Port"
+    & $NgrokCommand http "http://127.0.0.1:$Port"
 } finally {
     if ($flaskProcess -and -not $flaskProcess.HasExited) {
         Write-Host ""

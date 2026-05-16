@@ -55,6 +55,12 @@
                     <input type="text" name="security_answer" class="form-control" placeholder="Enter your answer" required>
                 </div>
 
+                <div class="mb-3">
+                    <label class="form-label">Product Serial Number</label>
+                    <input type="text" name="product_code" class="form-control" placeholder="{{ default_product_code }}" required>
+                    <div class="form-text">Format: {{ product_code_example }}. After registration, the first face enrollment page will open.</div>
+                </div>
+
                 <button type="submit" class="btn btn-primary w-100">Register</button>
             </form>
 
