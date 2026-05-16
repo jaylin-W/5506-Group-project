@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block title %}403 - 禁止访问{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="text-center">
+        <h1 class="display-1 fw-bold text-danger">403</h1>
+        <h2>禁止访问</h2>
+        <p class="lead text-muted">抱歉，你没有权限访问此页面。</p>
+        <a href="{{ url_for('index') }}" class="btn btn-primary btn-lg mt-3">返回首页</a>
+    </div>
+</section>
+{% endblock %}

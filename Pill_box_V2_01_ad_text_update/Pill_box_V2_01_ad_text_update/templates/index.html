@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}主页 - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="hero-section">
+    <div class="row align-items-center g-4">
+        <div class="col-lg-7">
+            <span class="hero-badge mb-3">Smart Health Supplement Box · {{ project_version }}</span>
+            <h1 class="display-5 fw-bold">{{ blocks.home_hero_title }}</h1>
+            <p class="lead mt-3">{{ blocks.home_hero_subtitle }}</p>
+            <div class="mt-4 d-flex flex-wrap gap-2">
+                <a class="btn btn-light btn-lg" href="{{ url_for('register') }}">立即注册</a>
+                <a class="btn btn-outline-light btn-lg" href="{{ url_for('about') }}">了解更多</a>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="hero-card">
+                <h4>今日提醒</h4>
+                <p>08:00 维生素 C</p>
+                <p>12:30 鱼油胶囊</p>
+                <p>21:00 钙片</p>
+                <small>智能提醒 · 分格存放 · 健康记录</small>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="promo-section">
+    <div id="promoCarousel" class="carousel slide promo-carousel" data-bs-ride="carousel" data-bs-interval="3200" data-bs-pause="false" data-bs-touch="true">
+        <div class="carousel-inner">
+            {% for ad in promo_ads %}
+            <div class="carousel-item {% if loop.first %}active{% endif %}">
+                <div class="promo-banner" style="background-image: linear-gradient(90deg, rgba(12, 19, 41, 0.48), rgba(12, 19, 41, 0.10)), url('{{ url_for('static', filename='images/' ~ ad.image) }}');">
+                    <div class="promo-banner-content">
+                        <span class="promo-tag">{{ ad.badge }}</span>
+                        <h2>{{ ad.title }}</h2>
+                        <h5>{{ ad.subtitle }}</h5>
+                        <p>{{ ad.desc }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section id="features" class="section-block section-gradient-a">
+    <h2 class="section-title">核心功能</h2>
+    <div class="row g-4">
+        <div class="col-md-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ blocks.home_feature_1_title }}</h5>
+                    <p class="card-text">{{ blocks.home_feature_1_body }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ blocks.home_feature_2_title }}</h5>
+                    <p class="card-text">{{ blocks.home_feature_2_body }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ blocks.home_feature_3_title }}</h5>
+                    <p class="card-text">{{ blocks.home_feature_3_body }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="usage" class="section-block section-gradient-b">
+    <h2 class="section-title">适用场景</h2>
+    <div class="row">
+        <div class="col-md-6">
+            <ul class="list-group list-group-flush rounded-4 overflow-hidden shadow-sm">
+                <li class="list-group-item">上班族：避免工作繁忙导致漏服。</li>
+                <li class="list-group-item">学生群体：养成规律补充营养的习惯。</li>
+                <li class="list-group-item">老年用户：减少忘记服用和重复服用问题。</li>
+                <li class="list-group-item">家庭用户：统一管理家庭成员的健康补充计划。</li>
+            </ul>
+        </div>
+        <div class="col-md-6 mt-4 mt-md-0">
+            <div class="info-box colorful-box">
+                <h5>系统优势</h5>
+                <p>
+                    本页面使用 Flask 搭建服务端，使用 Python 自带 sqlite3 操作 SQLite 数据库，
+                    同时结合 Flask-Login 实现基础用户登录状态管理。
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

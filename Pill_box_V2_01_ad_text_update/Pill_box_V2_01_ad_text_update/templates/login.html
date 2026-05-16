@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}登录页面 - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <div class="card form-card shadow-sm">
+        <div class="card-body">
+            <h2 class="mb-4 text-center">登录页面</h2>
+
+            <form method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-3">
+                    <label class="form-label">用户名或邮箱</label>
+                    <input type="text" name="account" class="form-control" placeholder="请输入用户名或邮箱" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">密码</label>
+                    <input type="password" name="password" class="form-control" placeholder="请输入密码" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">登录</button>
+            </form>
+
+            <p class="text-center mt-3 mb-0">
+                没有账户？
+                <a href="{{ url_for('register') }}">立即注册</a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

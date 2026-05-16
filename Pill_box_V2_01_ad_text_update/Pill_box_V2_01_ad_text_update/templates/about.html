@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}关于 - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="page-header colorful-header">
+    <h1>{{ blocks.about_intro_title }}</h1>
+    <p>面向日常健康管理的智能化辅助设备。</p>
+</section>
+
+<section id="features" class="section-block">
+    <h2 class="section-title">产品理念</h2>
+    <p>{{ blocks.about_intro_body }}</p>
+
+    <div class="row g-4 mt-2">
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body">
+                    <h5>提醒更及时</h5>
+                    <p>通过系统提醒减少忘记服用的问题。</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body">
+                    <h5>记录更清楚</h5>
+                    <p>帮助用户了解自己的补充计划和健康目标。</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body">
+                    <h5>管理更方便</h5>
+                    <p>支持账户系统，方便后续扩展更多个人化功能。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="usage" class="section-block bg-soft">
+    <h2 class="section-title">未来可扩展功能</h2>
+    <ol>
+        <li>添加保健品清单管理。</li>
+        <li>设置每日、每周、每月提醒计划。</li>
+        <li>记录已服用、未服用状态。</li>
+        <li>加入库存不足提醒。</li>
+        <li>支持家庭成员共享管理。</li>
+    </ol>
+</section>
+{% endblock %}

@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}个人页面 - {{ project_name }} {{ project_version }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>个人页面</h1>
+    <p>欢迎，{{ current_user.username }}。你可以在这里维护基础健康信息，并添加保健品服用计划。</p>
+</section>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h4 class="card-title">账户信息</h4>
+                <p><strong>用户名：</strong>{{ current_user.username }}</p>
+                <p><strong>邮箱：</strong>{{ current_user.email }}</p>
+                <p><strong>年龄：</strong>{{ current_user.age or "暂未填写" }}</p>
+                <p><strong>健康目标：</strong>{{ current_user.health_goal or "暂未填写" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h4 class="card-title">编辑个人资料</h4>
+                <form method="post">
+                    <input type="hidden" name="form_type" value="profile">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label class="form-label">年龄</label>
+                        <input type="number" name="age" class="form-control" value="{{ current_user.age or '' }}" min="1" max="120">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">健康目标</label>
+                        <textarea name="health_goal" class="form-control" rows="4" placeholder="例如：规律补充维生素、提高睡眠质量、增强免疫力等">{{ current_user.health_goal or '' }}</textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">保存资料</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<section id="features" class="section-block mt-4">
+    <h2 class="section-title">添加保健品服用计划</h2>
+
+    <form method="post" class="row g-3 align-items-end">
+        <input type="hidden" name="form_type" value="schedule">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="col-md-3">
+            <label class="form-label">选择保健品 / 药片</label>
+            <select name="supplement_name" class="form-select" required>
+                <option value="">请选择</option>
+                {% for item in supplement_options %}
+                    <option value="{{ item }}">{{ item }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label">选择吃药时间</label>
+            <select name="take_time" class="form-select" required>
+                <option value="">请选择</option>
+                {% for item in time_options %}
+                    <option value="{{ item }}">{{ item }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">时间每 30 分钟一个选项，例如 11:00、11:30、12:00、12:30。</div>
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label">选择允许区间</label>
+            <select name="time_window" class="form-select" required>
+                <option value="">请选择</option>
+                {% for item in window_options %}
+                    <option value="{{ item }}">±{{ item }} 分钟</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">区间每 5 分钟一个选项，例如 ±5、±10、±15。</div>
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label">备注</label>
+            <input type="text" name="note" class="form-control" placeholder="例如：饭后服用">
+        </div>
+
+        <div class="col-12">
+            <button type="submit" class="btn btn-success">添加计划</button>
+        </div>
+    </form>
+</section>
+
+<section id="usage" class="section-block bg-soft">
+    <h2 class="section-title">我的服用计划</h2>
+
+    {% if schedules %}
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover align-middle bg-white">
+                <thead class="table-primary">
+                    <tr>
+                        <th>保健品 / 药片</th>
+                        <th>服用时间</th>
+                        <th>允许区间</th>
+                        <th>备注</th>
+                        <th>添加时间</th>
+                        <th style="width: 100px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in schedules %}
+                        <tr>
+                            <td>{{ item.supplement_name }}</td>
+                            <td>{{ item.take_time }}</td>
+                            <td>±{{ item.time_window }} 分钟</td>
+                            <td>{{ item.note or "无" }}</td>
+                            <td>{{ item.created_at }}</td>
+                            <td>
+                                <form method="post" action="{{ url_for('delete_schedule', schedule_id=item.id) }}" onsubmit="return confirm('确定要删除这条计划吗？');" style="display:inline;">
+                                    {{ csrf_token() }}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-muted mb-0">你还没有添加任何保健品服用计划。</p>
+    {% endif %}
+</section>
+
+<section class="section-block">
+    <h2 class="section-title">我的智能药盒概览</h2>
+    <div class="row g-4">
+        <div class="col-md-4">
+            <div class="stat-card">
+                <h3>{{ schedules|length }}</h3>
+                <p>当前计划</p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card">
+                <h3>0</h3>
+                <p>漏服记录</p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card">
+                <h3>良好</h3>
+                <p>健康习惯状态</p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

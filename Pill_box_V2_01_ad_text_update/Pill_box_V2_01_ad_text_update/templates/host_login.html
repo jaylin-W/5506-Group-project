@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Host登录 - 智能保健品药盒{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <div class="card form-card shadow-sm">
+        <div class="card-body">
+            <h2 class="mb-3 text-center">编辑页面登录</h2>
+            <p class="text-muted text-center">输入管理密码后，可以在线编辑主页和关于页面的固定板块内容。</p>
+
+            <form method="post">
+                <input type="hidden" name="action" value="login">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="mb-3">
+                    <label class="form-label">编辑密码</label>
+                    <input type="password" name="host_password" class="form-control" placeholder="默认：admin123" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">进入编辑页面</button>
+            </form>
+
+            <div class="alert alert-warning mt-3 mb-0">
+                演示默认密码是 <strong>admin123</strong>。正式使用时建议在 .env 中修改 HOST_PASSWORD。
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
