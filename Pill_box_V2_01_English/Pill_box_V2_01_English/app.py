@@ -651,19 +651,14 @@ def reminder_key_for_occurrence(schedule, scheduled_at):
 
 def reminder_edge_windows(schedule, scheduled_at):
     time_window = max(0, int(schedule["time_window"]))
-    edge_minutes = max(1, int(app.config["REMINDER_EDGE_WINDOW_MINUTES"]))
-    edge_delta = timedelta(minutes=edge_minutes)
     interval_start = scheduled_at - timedelta(minutes=time_window)
     interval_end = scheduled_at + timedelta(minutes=time_window)
 
-    start_window_end = min(interval_start + edge_delta, interval_end)
-    end_window_start = max(interval_end - edge_delta, start_window_end)
     return {
         "interval_start": interval_start,
         "interval_end": interval_end,
         "windows": [
-            ("start", interval_start, start_window_end),
-            ("end", end_window_start, interval_end),
+            ("active", interval_start, interval_end),
         ],
     }
 
