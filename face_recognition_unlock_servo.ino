@@ -18,6 +18,7 @@
 #include <WiFiClientSecure.h>
 #include <esp_sleep.h>
 #include <Preferences.h>
+#include <driver/rtc_io.h>
 #include <string.h>
 
 #include <eloquent_esp32cam.h>
@@ -50,8 +51,8 @@ using eloq::face::recognition;
 // =====================
 // Fill in the WiFi that your XIAO ESP32S3 can reach.
 // WiFi is intentionally not stored in flash, so old Preferences values cannot override these two lines.
-const char* WIFI_SSID = "iphone1";
-const char* WIFI_PASSWORD = "woshinibaba";
+const char* WIFI_SSID = "iot-test12";
+const char* WIFI_PASSWORD = "wdds3882";
 
 // Single-server test mode:
 // Use the same HTTPS ngrok URL that the phone opens. Ngrok forwards it to Flask on 127.0.0.1:5000.
@@ -71,8 +72,12 @@ const unsigned long DEVICE_REMINDER_POLL_MS = 15000;
 const unsigned long FACE_ENROLLMENT_COMMAND_POLL_MS = 10000;
 const unsigned long DISPENSING_TIMEOUT_MS = 600000UL;
 const int IR_ACTIVE_LEVEL = LOW;
+const unsigned long IR_DEBOUNCE_MS = 8;
+const unsigned long IR_COUNT_COOLDOWN_MS = 120;
+const unsigned long IR_DEBUG_PRINT_INTERVAL_MS = 3000;
 const bool ENABLE_DEEP_SLEEP = true;
 const int MIN_DEEP_SLEEP_SECONDS = 30;
+const bool ENABLE_BUTTON_DEEP_SLEEP_WAKE = true;
 
 String lastSeenRemoteUnlockAt = "";
 unsigned long lastDeviceStatusPoll = 0;
@@ -85,6 +90,7 @@ String activeReminderTime = "";
 int activeDoseQuantity = 1;
 int dispensedCount = 0;
 unsigned long dispensingStartTime = 0;
+bool activeRequiresPasswordUnlock = false;
 
 Preferences devicePrefs;
 bool prefsReady = false;
@@ -138,6 +144,8 @@ unsigned long lastDebounceTime = 0;
 bool lastIrReading = !IR_ACTIVE_LEVEL;
 bool stableIrState = !IR_ACTIVE_LEVEL;
 unsigned long lastIrDebounceTime = 0;
+unsigned long lastIrCountAt = 0;
+unsigned long lastIrDebugPrintAt = 0;
 
 
 // =====================
@@ -172,6 +180,7 @@ void printSerialConfigHelp();
 void updateSerialConfigCommands();
 void handleSerialConfigCommand(String command);
 void probeWebsiteConnection();
+void printWakeupReason();
 bool ensureWiFiConnected();
 bool pollReminderState();
 bool pollFaceEnrollmentCommand();
@@ -305,24 +314,63 @@ bool buttonPressedOnce() {
 
 bool irDoseDetectedOnce() {
   bool reading = digitalRead(IR_SENSOR_PIN);
+  unsigned long now = millis();
 
   if (reading != lastIrReading) {
-    lastIrDebounceTime = millis();
+    lastIrDebounceTime = now;
+    lastIrReading = reading;
   }
 
-  if ((millis() - lastIrDebounceTime) > DEBOUNCE_MS) {
+  if ((now - lastIrDebounceTime) > IR_DEBOUNCE_MS) {
     if (reading != stableIrState) {
       stableIrState = reading;
+      Serial.print("IR stable state: ");
+      Serial.println(stableIrState == HIGH ? "HIGH" : "LOW");
 
       if (stableIrState == IR_ACTIVE_LEVEL) {
-        lastIrReading = reading;
-        return true;
+        if (now - lastIrCountAt >= IR_COUNT_COOLDOWN_MS) {
+          lastIrCountAt = now;
+          return true;
+        }
+        Serial.println("IR active edge ignored by cooldown.");
       }
     }
   }
 
-  lastIrReading = reading;
   return false;
+}
+
+void resetIrDetector() {
+  bool reading = digitalRead(IR_SENSOR_PIN);
+  lastIrReading = reading;
+  stableIrState = reading;
+  lastIrDebounceTime = millis();
+  lastIrCountAt = 0;
+  lastIrDebugPrintAt = 0;
+
+  Serial.print("IR baseline: ");
+  Serial.print(reading == HIGH ? "HIGH" : "LOW");
+  Serial.print(", active level: ");
+  Serial.println(IR_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
+  if (reading == IR_ACTIVE_LEVEL) {
+    Serial.println("IR warning: sensor is already active at dispensing start.");
+  }
+}
+
+void printIrStatus() {
+  bool reading = digitalRead(IR_SENSOR_PIN);
+  Serial.print("IR raw=");
+  Serial.print(reading == HIGH ? "HIGH" : "LOW");
+  Serial.print(", stable=");
+  Serial.print(stableIrState == HIGH ? "HIGH" : "LOW");
+  Serial.print(", active_level=");
+  Serial.print(IR_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
+  Serial.print(", raw_active=");
+  Serial.print(reading == IR_ACTIVE_LEVEL ? "yes" : "no");
+  Serial.print(", count=");
+  Serial.print(dispensedCount);
+  Serial.print(" / ");
+  Serial.println(activeDoseQuantity);
 }
 
 
@@ -389,6 +437,7 @@ void printSerialConfigHelp() {
   Serial.println("  SET_DEVICE xiao-esp32s3-sense-5506123");
   Serial.println("  RECONNECT");
   Serial.println("  POLL");
+  Serial.println("  IR_STATUS");
   Serial.println("  CLEAR_CONFIG");
 }
 
@@ -465,6 +514,11 @@ void handleSerialConfigCommand(String command) {
   if (command == "POLL") {
     pollFaceEnrollmentCommand();
     pollReminderState();
+    return;
+  }
+
+  if (command == "IR_STATUS") {
+    printIrStatus();
     return;
   }
 
@@ -710,13 +764,27 @@ String websiteHost() {
 
 int websitePort() {
   String base = effectiveServerBaseUrl();
+  bool https = base.startsWith("https://");
   if (base.startsWith("https://")) {
-    return 443;
+    base.replace("https://", "");
+  } else if (base.startsWith("http://")) {
+    base.replace("http://", "");
   }
-  if (base.startsWith("http://")) {
-    return 80;
+
+  int slash = base.indexOf("/");
+  if (slash >= 0) {
+    base = base.substring(0, slash);
   }
-  return 443;
+
+  int colon = base.indexOf(":");
+  if (colon >= 0) {
+    int explicitPort = base.substring(colon + 1).toInt();
+    if (explicitPort > 0) {
+      return explicitPort;
+    }
+  }
+
+  return https ? 443 : 80;
 }
 
 void probeWebsiteConnection() {
@@ -978,6 +1046,7 @@ void clearActiveReminderState() {
   activeDoseQuantity = 1;
   dispensedCount = 0;
   dispensingStartTime = 0;
+  activeRequiresPasswordUnlock = false;
 }
 
 bool completeActiveReminderOnWebsite() {
@@ -1025,6 +1094,7 @@ void startDispensingFlow(const char* source) {
   dispensingStartTime = millis();
   currentState = DISPENSING;
   showVerificationSuccess();
+  resetIrDetector();
   unlockServo();
 
   Serial.print("DISPENSING started by ");
@@ -1039,12 +1109,29 @@ void startDispensingFlow(const char* source) {
 void continueAfterWebsitePinUnlock() {
   Serial.println("Website PIN confirmed. Continuing pill box dispensing flow.");
   if (activeReminderKey.length() == 0) {
-    Serial.println("No active reminder is stored locally. Polling the website before dispensing.");
-    currentState = REMINDER_IDLE;
-    pollReminderState();
+    Serial.println("No active reminder is stored locally. Starting dispensing with the current dose target.");
+    activeDoseQuantity = max(1, activeDoseQuantity);
+    startDispensingFlow("website PIN unlock without local reminder");
     return;
   }
   startDispensingFlow("website PIN unlock");
+}
+
+void printWakeupReason() {
+  esp_sleep_wakeup_cause_t wakeupReason = esp_sleep_get_wakeup_cause();
+
+  Serial.print("Wakeup reason: ");
+  switch (wakeupReason) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+      Serial.println("button");
+      break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+      Serial.println("timer");
+      break;
+    default:
+      Serial.println("power-on/reset");
+      break;
+  }
 }
 
 void enterDeepSleepSeconds(int sleepSeconds) {
@@ -1056,9 +1143,21 @@ void enterDeepSleepSeconds(int sleepSeconds) {
   Serial.print(sleepSeconds);
   Serial.println(" seconds until the next planned wake window.");
 
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
+
+  if (ENABLE_BUTTON_DEEP_SLEEP_WAKE) {
+    gpio_num_t wakeButton = (gpio_num_t) BUTTON_PIN;
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    rtc_gpio_pullup_en(wakeButton);
+    rtc_gpio_pulldown_dis(wakeButton);
+    esp_sleep_enable_ext0_wakeup(wakeButton, 0);
+    Serial.print("Button deep-sleep wake enabled on GPIO");
+    Serial.println(BUTTON_PIN);
+  }
+
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
   delay(100);
   esp_deep_sleep_start();
 }
@@ -1074,6 +1173,13 @@ bool pollReminderState() {
   String reminderKey = jsonStringValue(response, "reminder_key");
   int doseQuantity = jsonIntValue(response, "dose_quantity", jsonIntValue(response, "target_quantity", 1));
   int sleepSeconds = jsonIntValue(response, "sleep_seconds", 0);
+  bool faceEnrollmentCompleted = jsonBoolValue(response, "has_completed", true);
+  String passwordRequiredReason = jsonStringValue(response, "password_required_reason");
+  bool passwordFallbackRequired = jsonBoolValue(response, "password_fallback_required", false);
+  bool requiresPasswordUnlock = !faceEnrollmentCompleted
+      || passwordRequiredReason == "face_enrollment_missing"
+      || passwordRequiredReason == "face_unlock_required"
+      || passwordFallbackRequired;
 
   if (action == "wait_for_pin") {
     if (reminderKey.length() > 0 && activeReminderKey.length() == 0) {
@@ -1081,6 +1187,7 @@ bool pollReminderState() {
       activeReminderLabel = jsonStringValue(response, "supplement_name");
       activeReminderTime = jsonStringValue(response, "take_time");
       activeDoseQuantity = max(1, doseQuantity);
+      activeRequiresPasswordUnlock = requiresPasswordUnlock;
     }
     if (currentState == REMINDER_IDLE || currentState == FACE_FAILED) {
       currentState = FACE_REMOTE_UNLOCK_WAITING;
@@ -1100,6 +1207,7 @@ bool pollReminderState() {
       activeReminderLabel = jsonStringValue(response, "supplement_name");
       activeReminderTime = jsonStringValue(response, "take_time");
       activeDoseQuantity = max(1, doseQuantity);
+      activeRequiresPasswordUnlock = requiresPasswordUnlock;
       dispensedCount = 0;
       currentState = REMINDER_BUZZING;
       startBuzzer();
@@ -1112,7 +1220,11 @@ bool pollReminderState() {
       Serial.println(activeReminderTime.length() > 0 ? activeReminderTime : "scheduled time");
       Serial.print("Dose quantity: ");
       Serial.println(activeDoseQuantity);
-      Serial.println("Buzzer is ringing. Press button to start face detection.");
+      if (activeRequiresPasswordUnlock) {
+        Serial.println("Buzzer is ringing. Press button to use website password unlock.");
+      } else {
+        Serial.println("Buzzer is ringing. Press button to start face detection.");
+      }
     }
     return true;
   }
@@ -1376,6 +1488,11 @@ void updateDispensingFlow() {
     return;
   }
 
+  if (millis() - lastIrDebugPrintAt >= IR_DEBUG_PRINT_INTERVAL_MS) {
+    lastIrDebugPrintAt = millis();
+    printIrStatus();
+  }
+
   if (irDoseDetectedOnce()) {
     dispensedCount++;
     Serial.print("IR dose count: ");
@@ -1458,6 +1575,7 @@ void setup() {
 
   Serial.println();
   Serial.println("=== Buzzer + Button + LEDs + Face Detect + Servo Test ===");
+  printWakeupReason();
   loadRuntimeConfig();
   printRuntimeConfig();
   printSerialConfigHelp();
@@ -1477,6 +1595,7 @@ void setup() {
   pinMode(WHITE_LED_PIN, OUTPUT);
 
   pinMode(BUZZER_PIN, OUTPUT);
+  rtc_gpio_deinit((gpio_num_t) BUTTON_PIN);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
 
@@ -1546,10 +1665,18 @@ void loop() {
   updateDispensingFlow();
   updateServoAutoLock();
 
-  if (currentState == REMINDER_IDLE
+  if (currentState != DISPENSING
+      && currentState != FACE_VERIFYING
+      && currentState != FACE_ENROLLING
       && millis() - lastFaceEnrollmentPoll >= FACE_ENROLLMENT_COMMAND_POLL_MS) {
     lastFaceEnrollmentPoll = millis();
     pollFaceEnrollmentCommand();
+  }
+
+  if (currentState == REMINDER_IDLE
+      && millis() - lastDeviceStatusPoll >= DEVICE_STATUS_POLL_MS) {
+    lastDeviceStatusPoll = millis();
+    refreshDeviceStatus(false);
   }
 
   if (currentState == REMINDER_IDLE
@@ -1575,6 +1702,15 @@ void loop() {
 
     else if (currentState == REMINDER_BUZZING) {
       stopBuzzer();
+
+      if (activeRequiresPasswordUnlock) {
+        currentState = FACE_REMOTE_UNLOCK_WAITING;
+        showVerificationFailed();
+        Serial.println("Face enrollment is not complete. Waiting for website password unlock.");
+        Serial.println("Open Profile, enter the pill box unlock password, then IR counting will start.");
+        refreshDeviceStatus(false);
+        return;
+      }
 
       currentState = FACE_VERIFYING;
 

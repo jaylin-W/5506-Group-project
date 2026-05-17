@@ -55,6 +55,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const faceStatusUrl = document.body.dataset.faceStatusUrl;
     const unlockUrl = document.body.dataset.faceUnlockUrl || "/unlock";
+    const suppressFaceUnlockAlert = document.body.dataset.suppressFaceUnlockAlert === "true";
     const faceAlert = document.querySelector("[data-face-alert]");
     const faceAlertMessage = document.querySelector("[data-face-alert-message]");
     const faceUnlockModalElement = document.querySelector("[data-face-unlock-modal]");
@@ -304,7 +305,7 @@ document.addEventListener("DOMContentLoaded", function () {
     };
 
     const checkFaceUnlockStatus = async () => {
-        if (!faceStatusUrl) {
+        if (!faceStatusUrl || suppressFaceUnlockAlert) {
             return;
         }
 
@@ -376,8 +377,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
     registerServiceWorker().then(() => {
         updateNotificationButtons();
-        checkFaceUnlockStatus();
-        if (faceStatusUrl) {
+        if (!suppressFaceUnlockAlert) {
+            checkFaceUnlockStatus();
+        }
+        if (faceStatusUrl && !suppressFaceUnlockAlert) {
             window.setInterval(checkFaceUnlockStatus, 15000);
         }
     });
@@ -413,10 +416,18 @@ document.addEventListener("DOMContentLoaded", function () {
                 statusBadge.dataset.status = status;
             }
             if (title) {
-                title.textContent = titleByStatus[status] || "Face enrollment";
+                title.textContent = data.password_fallback_required && status !== "completed"
+                    ? "Use password unlock for now"
+                    : (titleByStatus[status] || "Face enrollment");
             }
             if (message) {
-                message.textContent = data.message || "Keep your face centered and rotate the camera angle slowly.";
+                if (data.password_fallback_required && status !== "completed") {
+                    const failedAttempts = Number(data.enrollment_failed_attempts || 0);
+                    const threshold = Number(data.enrollment_failure_threshold || 3);
+                    message.textContent = `Face enrollment has failed ${failedAttempts || threshold} times. Use password unlock for now, then retry enrollment when the camera is ready.`;
+                } else {
+                    message.textContent = data.message || "Keep your face centered and rotate the camera angle slowly.";
+                }
             }
             if (progress) {
                 progress.style.width = `${percent}%`;

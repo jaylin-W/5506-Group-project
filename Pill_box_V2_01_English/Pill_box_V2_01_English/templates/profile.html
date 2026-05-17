@@ -161,6 +161,35 @@
     </div>
 </section>
 
+{% if current_user.product_code and not face_enrollment_gate.has_completed %}
+<section id="face-enrollment-password" class="section-block mt-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-lg-7">
+            <span class="section-kicker">Password Fallback</span>
+            <h2 class="section-title mb-2">Use Password Unlock</h2>
+            {% if face_enrollment_gate.password_fallback_required %}
+                <p class="text-muted mb-0">Face enrollment has failed {{ face_enrollment_gate.failed_attempts }} times. Use the pill box unlock password for now, then retry enrollment when the camera is ready.</p>
+            {% else %}
+                <p class="text-muted mb-0">Face enrollment is not complete. If a reminder is due before enrollment succeeds, the pill box will ask for password unlock.</p>
+            {% endif %}
+        </div>
+        <div class="col-lg-5">
+            <form method="post" class="row g-2">
+                <input type="hidden" name="form_type" value="face_enrollment_password_unlock">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-sm-8">
+                    <label class="form-label">Pill Box Unlock Password</label>
+                    <input type="password" name="unlock_password" class="form-control" autocomplete="current-password" required>
+                </div>
+                <div class="col-sm-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Confirm</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <section id="features" class="section-block mt-4">
     <h2 class="section-title">Add Supplement Schedule</h2>
 

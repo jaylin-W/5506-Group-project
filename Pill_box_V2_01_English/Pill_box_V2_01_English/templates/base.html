@@ -13,6 +13,7 @@
       {% if current_user.is_authenticated %}
       data-face-status-url="{{ url_for('face_unlock_status') }}"
       data-face-unlock-url="{{ url_for('unlock_pill_box') }}"
+      data-suppress-face-unlock-alert="{{ 'true' if request.endpoint == 'face_enrollment_page' else 'false' }}"
       {% endif %}>
 
 <nav class="navbar navbar-expand-lg navbar-dark site-navbar fixed-top shadow-sm">

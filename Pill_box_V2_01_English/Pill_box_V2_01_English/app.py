@@ -50,8 +50,10 @@ app.config["VAPID_PUBLIC_KEY"] = os.environ.get("VAPID_PUBLIC_KEY")
 app.config["VAPID_PRIVATE_KEY"] = os.environ.get("VAPID_PRIVATE_KEY")
 app.config["VAPID_CLAIMS_SUB"] = os.environ.get("VAPID_CLAIMS_SUB", "mailto:admin@example.com")
 app.config["FACE_ENROLLMENT_REQUESTED_SAMPLES"] = 3
+app.config["FACE_ENROLLMENT_FAILURE_THRESHOLD"] = 3
 app.config["FACE_ENROLLMENT_WINDOW_MINUTES"] = 5
 app.config["FACE_ENROLLMENT_MAX_PHOTO_BYTES"] = 700 * 1024
+app.config["REMINDER_EDGE_WINDOW_MINUTES"] = 2
 try:
     DISPENSING_TIMEOUT_SECONDS = max(60, int(os.environ.get("DISPENSING_TIMEOUT_SECONDS", "600")))
 except ValueError:
@@ -624,20 +626,80 @@ def circular_minute_distance(left, right):
     return min(distance, 24 * 60 - distance)
 
 
-def next_window_start_at(schedule, now):
+def schedule_occurrences(schedule, now, days_before=1, days_after=2):
     scheduled_minutes = parse_take_time_minutes(schedule["take_time"])
     if scheduled_minutes is None:
-        return None
+        return []
 
-    window_start_minutes = (scheduled_minutes - int(schedule["time_window"])) % (24 * 60)
-    wake_hour = window_start_minutes // 60
-    wake_minute = window_start_minutes % 60
-    for day_offset in range(2):
-        wake_date = now.date() + timedelta(days=day_offset)
-        wake_time = datetime_time(wake_hour, wake_minute)
-        wake_at = datetime.combine(wake_date, wake_time, tzinfo=now.tzinfo)
-        if wake_at > now:
-            return wake_at
+    scheduled_hour = scheduled_minutes // 60
+    scheduled_minute = scheduled_minutes % 60
+    occurrences = []
+    for day_offset in range(-days_before, days_after + 1):
+        schedule_date = now.date() + timedelta(days=day_offset)
+        scheduled_at = datetime.combine(
+            schedule_date,
+            datetime_time(scheduled_hour, scheduled_minute),
+            tzinfo=now.tzinfo,
+        )
+        occurrences.append(scheduled_at)
+    return occurrences
+
+
+def reminder_key_for_occurrence(schedule, scheduled_at):
+    return f"{schedule['schedule_id']}:{scheduled_at.date().isoformat()}:{schedule['take_time']}"
+
+
+def reminder_edge_windows(schedule, scheduled_at):
+    time_window = max(0, int(schedule["time_window"]))
+    edge_minutes = max(1, int(app.config["REMINDER_EDGE_WINDOW_MINUTES"]))
+    edge_delta = timedelta(minutes=edge_minutes)
+    interval_start = scheduled_at - timedelta(minutes=time_window)
+    interval_end = scheduled_at + timedelta(minutes=time_window)
+
+    start_window_end = min(interval_start + edge_delta, interval_end)
+    end_window_start = max(interval_end - edge_delta, start_window_end)
+    return {
+        "interval_start": interval_start,
+        "interval_end": interval_end,
+        "windows": [
+            ("start", interval_start, start_window_end),
+            ("end", end_window_start, interval_end),
+        ],
+    }
+
+
+def reminder_timing_for_schedule(schedule, now):
+    for scheduled_at in schedule_occurrences(schedule, now):
+        timing = reminder_edge_windows(schedule, scheduled_at)
+        for phase, window_start, window_end in timing["windows"]:
+            if window_start <= now < window_end:
+                return {
+                    "is_due": True,
+                    "phase": phase,
+                    "scheduled_at": scheduled_at,
+                    "interval_start": timing["interval_start"],
+                    "interval_end": timing["interval_end"],
+                    "reminder_window_start": window_start,
+                    "reminder_window_end": window_end,
+                    "reminder_key": reminder_key_for_occurrence(schedule, scheduled_at),
+                }
+    return {"is_due": False}
+
+
+def next_window_start_at(user_id, schedule, now):
+    for scheduled_at in schedule_occurrences(schedule, now, days_before=1, days_after=2):
+        reminder_key = reminder_key_for_occurrence(schedule, scheduled_at)
+        event = get_device_reminder_event(user_id, reminder_key)
+        if event is not None and event["status"] in ("completed", "missed"):
+            continue
+
+        timing = reminder_edge_windows(schedule, scheduled_at)
+        for phase, window_start, window_end in timing["windows"]:
+            if window_end <= now:
+                continue
+            if window_start <= now < window_end:
+                return now
+            return window_start
     return None
 
 
@@ -646,13 +708,20 @@ def serialize_schedule_for_device(row, now=None):
     scheduled_minutes = parse_take_time_minutes(row["take_time"])
     now_minutes = now.hour * 60 + now.minute
     minutes_from_target = None
-    is_due = False
+    timing = {"is_due": False}
     if scheduled_minutes is not None:
         minutes_from_target = circular_minute_distance(now_minutes, scheduled_minutes)
-        is_due = minutes_from_target <= int(row["time_window"])
+        timing = reminder_timing_for_schedule(
+            {
+                "schedule_id": row["id"],
+                "take_time": row["take_time"],
+                "time_window": row["time_window"],
+            },
+            now,
+        )
 
-    reminder_key = f"{row['id']}:{now.date().isoformat()}:{row['take_time']}"
-    return {
+    reminder_key = timing.get("reminder_key") or f"{row['id']}:{now.date().isoformat()}:{row['take_time']}"
+    serialized = {
         "schedule_id": row["id"],
         "reminder_key": reminder_key,
         "supplement_name": row["supplement_name"],
@@ -661,9 +730,20 @@ def serialize_schedule_for_device(row, now=None):
         "target_quantity": row["target_quantity"],
         "dose_quantity": row["target_quantity"],
         "note": row["note"],
-        "is_due": is_due,
+        "is_due": timing["is_due"],
         "minutes_from_target": minutes_from_target,
     }
+    if timing["is_due"]:
+        serialized.update(
+            {
+                "reminder_phase": timing["phase"],
+                "interval_start": timing["interval_start"].isoformat(timespec="seconds"),
+                "interval_end": timing["interval_end"].isoformat(timespec="seconds"),
+                "reminder_window_start": timing["reminder_window_start"].isoformat(timespec="seconds"),
+                "reminder_window_end": timing["reminder_window_end"].isoformat(timespec="seconds"),
+            }
+        )
+    return serialized
 
 
 def get_device_reminder_event(user_id, reminder_key):
@@ -753,6 +833,66 @@ def mark_device_reminder_timeout(user_id, reminder_key, device_id=None, taken_qu
         conn.close()
 
 
+def get_face_enrollment_gate(user_id):
+    threshold = app.config["FACE_ENROLLMENT_FAILURE_THRESHOLD"]
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT status
+            FROM face_enrollment_session
+            WHERE user_id = ?
+            ORDER BY id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    has_completed = any(row["status"] == "completed" for row in rows)
+    failed_attempts = 0
+    for row in rows:
+        if row["status"] == "completed":
+            break
+        if row["status"] == "failed":
+            failed_attempts += 1
+
+    return {
+        "has_completed": has_completed,
+        "failed_attempts": failed_attempts,
+        "failure_threshold": threshold,
+        "password_fallback_required": (not has_completed and failed_attempts >= threshold),
+    }
+
+
+def mark_face_enrollment_password_unlock_required(user_id):
+    now = utc_now_iso()
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT unlock_required FROM user WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return False
+
+        was_required = bool(row["unlock_required"])
+        if not was_required:
+            conn.execute(
+                """
+                UPDATE user
+                SET unlock_required = 1,
+                    last_face_failure_at = ?
+                WHERE id = ?
+                """,
+                (now, user_id),
+            )
+            conn.commit()
+        return not was_required
+    finally:
+        conn.close()
+
+
 def get_device_reminder_state(user_id, device_id=None):
     now = local_now()
     schedules = [serialize_schedule_for_device(row, now) for row in get_user_schedules(user_id)]
@@ -760,25 +900,39 @@ def get_device_reminder_state(user_id, device_id=None):
     due_schedules.sort(key=lambda schedule: (schedule["minutes_from_target"], schedule["take_time"], schedule["schedule_id"]))
 
     active_reminder = None
-    if due_schedules:
-        candidate = due_schedules[0]
+    for candidate in due_schedules:
         event = get_device_reminder_event(user_id, candidate["reminder_key"])
         if event is None or event["status"] not in ("completed", "missed"):
             record_device_reminder_event(user_id, candidate, device_id)
             active_reminder = candidate
+            break
 
     face_status = get_face_unlock_status(user_id)
+    face_enrollment = get_face_enrollment_gate(user_id)
     device_action = "idle"
-    if face_status and face_status.get("unlock_required"):
-        device_action = "wait_for_pin"
-    elif active_reminder:
+    password_required_reason = None
+    if active_reminder:
         device_action = "ring_reminder"
+        if not face_enrollment["has_completed"]:
+            should_notify = mark_face_enrollment_password_unlock_required(user_id)
+            face_status = get_face_unlock_status(user_id)
+            face_status["unlock_url"] = url_for("profile", _anchor="face-enrollment-password")
+            if should_notify:
+                face_status["push"] = send_web_push_notification(user_id, face_status)
+            password_required_reason = "face_enrollment_missing"
+        elif face_status and face_status.get("unlock_required"):
+            password_required_reason = "face_unlock_required"
+    elif face_status and face_status.get("unlock_required"):
+        device_action = "wait_for_pin"
+
+    if face_status:
+        face_status.setdefault("unlock_url", face_unlock_url_for_status(face_status))
 
     next_reminder = None
     next_wake_at = None
     if schedules:
         future_wakes = [
-            (next_window_start_at(schedule, now), schedule)
+            (next_window_start_at(user_id, schedule, now), schedule)
             for schedule in schedules
         ]
         future_wakes = [(wake_at, schedule) for wake_at, schedule in future_wakes if wake_at is not None]
@@ -799,7 +953,10 @@ def get_device_reminder_state(user_id, device_id=None):
         "dispensing_timeout_seconds": app.config["DISPENSING_TIMEOUT_SECONDS"],
         "schedules": schedules,
         "face_unlock": face_status,
+        "face_enrollment": face_enrollment,
     }
+    if password_required_reason:
+        state["password_required_reason"] = password_required_reason
     if active_reminder:
         state.update(
             {
@@ -836,16 +993,37 @@ def get_face_unlock_status(user_id):
 
     failed_attempts = row["face_failed_attempts"] or 0
     threshold = app.config["FACE_FAILURE_THRESHOLD"]
-    return {
+    face_enrollment = get_face_enrollment_gate(user_id)
+    status = {
         "failed_attempts": failed_attempts,
         "failure_threshold": threshold,
         "unlock_required": bool(row["unlock_required"]) or failed_attempts >= threshold,
         "last_face_failure_at": row["last_face_failure_at"],
         "last_unlock_at": row["last_unlock_at"],
-        "notification_title": f"目前面部识别已失败{threshold}次",
-        "notification_body": "请进入网站，输入解锁密码。",
-        "page_alert_title": "请输入密码解锁药盒",
+        "notification_title": f"Face recognition failed {threshold} times",
+        "notification_body": "Please open the website and enter the pill box unlock password.",
+        "page_alert_title": "Enter password to unlock the pill box",
+        "unlock_reason": "face_verification_failed",
+        "face_enrollment": face_enrollment,
     }
+
+    if status["unlock_required"] and not face_enrollment["has_completed"]:
+        status.update(
+            {
+                "notification_title": "Face enrollment is not complete",
+                "notification_body": "Please enter your pill box unlock password to take this dose.",
+                "page_alert_title": "Use password unlock",
+                "unlock_reason": "face_enrollment_missing",
+            }
+        )
+
+    return status
+
+
+def face_unlock_url_for_status(status):
+    if status and status.get("unlock_reason") == "face_enrollment_missing":
+        return url_for("profile", _anchor="face-enrollment-password")
+    return url_for("unlock_pill_box")
 
 
 def record_face_failure(user_id):
@@ -1039,6 +1217,7 @@ def get_face_enrollment_session(session_id, user_id=None):
 
 def serialize_face_enrollment_session(row):
     photos = get_face_enrollment_photos(row["id"], row["user_id"])
+    face_enrollment = get_face_enrollment_gate(row["user_id"])
     serialized_photos = [
         {
             "photo_id": photo["id"],
@@ -1067,6 +1246,10 @@ def serialize_face_enrollment_session(row):
         "has_photo": has_photo,
         "photo_url": url_for("face_enrollment_photo", session_id=row["id"]) if has_photo else None,
         "photos": serialized_photos,
+        "has_completed_enrollment": face_enrollment["has_completed"],
+        "enrollment_failed_attempts": face_enrollment["failed_attempts"],
+        "enrollment_failure_threshold": face_enrollment["failure_threshold"],
+        "password_fallback_required": face_enrollment["password_fallback_required"],
     }
 
 
@@ -1352,7 +1535,7 @@ def send_web_push_notification(user_id, status):
         {
             "title": status["notification_title"],
             "body": status["notification_body"],
-            "url": url_for("unlock_pill_box"),
+            "url": status.get("unlock_url") or url_for("unlock_pill_box"),
             "interaction": True,
         },
         ensure_ascii=False,
@@ -1627,7 +1810,7 @@ def logout():
 @login_required
 def face_unlock_status():
     status = get_face_unlock_status(current_user.id)
-    status["unlock_url"] = url_for("unlock_pill_box")
+    status["unlock_url"] = face_unlock_url_for_status(status)
     status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
     return jsonify(status)
 
@@ -1660,7 +1843,7 @@ def push_subscribe():
 @login_required
 def push_test():
     status = get_face_unlock_status(current_user.id)
-    status["unlock_url"] = url_for("unlock_pill_box")
+    status["unlock_url"] = face_unlock_url_for_status(status)
     result = send_web_push_notification(current_user.id, status)
     return jsonify(result)
 
@@ -1756,7 +1939,7 @@ def report_face_unlock_failure():
     if status is None:
         return jsonify({"error": "User not found."}), 404
 
-    status["unlock_url"] = url_for("unlock_pill_box")
+    status["unlock_url"] = face_unlock_url_for_status(status)
     if status.get("should_notify"):
         status["push"] = send_web_push_notification(user_id, status)
     else:
@@ -1786,7 +1969,7 @@ def face_unlock_device_status():
     if status is None:
         return jsonify({"error": "User not found."}), 404
 
-    status["unlock_url"] = url_for("unlock_pill_box")
+    status["unlock_url"] = face_unlock_url_for_status(status)
     status["server_time"] = utc_now_iso()
     status["device_action"] = "wait_for_pin" if status["unlock_required"] else "retry_face"
     return jsonify(status)
@@ -1877,18 +2060,18 @@ def face_enrollment_photo_item(session_id, photo_id):
 def face_enrollment_device_command():
     payload = get_device_payload()
     product_code = (payload.get("product_code") or "").strip().upper()
-    if is_universal_test_product_code(product_code):
-        token_error = validate_device_api_token()
-        if token_error:
-            message, status_code = token_error
+
+    row = None
+    user_id, error = resolve_device_request_user(payload)
+    if error:
+        message, status_code = error
+        if not is_universal_test_product_code(product_code) or status_code != 404:
             return jsonify({"error": message}), status_code
-        row = get_latest_active_face_enrollment_by_product_code(UNIVERSAL_TEST_PRODUCT_CODE)
     else:
-        user_id, error = resolve_device_request_user(payload)
-        if error:
-            message, status_code = error
-            return jsonify({"error": message}), status_code
         row = get_active_face_enrollment_for_user(user_id)
+
+    if row is None and is_universal_test_product_code(product_code):
+        row = get_latest_active_face_enrollment_by_product_code(UNIVERSAL_TEST_PRODUCT_CODE)
 
     if row is None:
         return jsonify({"command": "idle", "server_time": utc_now_iso()})
@@ -1989,20 +2172,33 @@ def face_enrollment_device_photo(session_id):
 @login_required
 @limiter.limit("10 per minute", methods=["POST"])
 def unlock_pill_box():
+    source = (request.values.get("source") or "").strip()
+    next_target = (request.values.get("next") or url_for("profile")).strip()
+    if not is_safe_url(next_target):
+        next_target = url_for("profile")
+
     if request.method == "POST":
         unlock_password = request.form.get("unlock_password", "")
         if not current_user.check_unlock_password(unlock_password):
             flash("Incorrect unlock password.", "danger")
-            return redirect(url_for("unlock_pill_box"))
+            return redirect(url_for("unlock_pill_box", source=source, next=next_target))
 
         reset_face_unlock_status(current_user.id)
         current_user.face_failed_attempts = 0
         current_user.unlock_required = False
-        flash("Pill box unlock confirmed. Face recognition alert has been cleared.", "success")
-        return redirect(url_for("profile"))
+        if source == "face_enrollment":
+            flash("Password unlock confirmed. You can continue without completing face enrollment.", "success")
+        else:
+            flash("Pill box unlock confirmed. Face recognition alert has been cleared.", "success")
+        return redirect(next_target)
 
     face_status = get_face_unlock_status(current_user.id)
-    return render_template("unlock.html", face_status=face_status)
+    return render_template(
+        "unlock.html",
+        face_status=face_status,
+        source=source,
+        next_target=next_target,
+    )
 
 
 @app.route("/profile", methods=["GET", "POST"])
@@ -2146,6 +2342,21 @@ def profile():
             flash(success_message, "success")
             return redirect(url_for("profile"))
 
+        if form_type == "face_enrollment_password_unlock":
+            unlock_password = request.form.get("unlock_password", "")
+            if not current_user.check_unlock_password(unlock_password):
+                flash("Incorrect pill box unlock password.", "danger")
+                return redirect(url_for("profile", _anchor="face-enrollment-password"))
+
+            reset_face_unlock_status(current_user.id)
+            current_user.face_failed_attempts = 0
+            current_user.unlock_required = False
+            flash(
+                "Password unlock confirmed. Use password unlock until face enrollment is completed.",
+                "success",
+            )
+            return redirect(url_for("profile", _anchor="face-enrollment-password"))
+
         if form_type == "schedule":
             supplement_name = request.form.get("supplement_name", "").strip()
             take_time = request.form.get("take_time", "").strip()
@@ -2204,6 +2415,7 @@ def profile():
     schedules = get_user_schedules(current_user.id)
     missed_reminder_count = get_missed_reminder_count(current_user.id)
     latest_face_enrollment = get_latest_face_enrollment_for_user(current_user.id)
+    face_enrollment_gate = get_face_enrollment_gate(current_user.id)
     return render_template(
         "profile.html",
         supplement_options=SUPPLEMENT_OPTIONS,
@@ -2219,6 +2431,7 @@ def profile():
         default_device_id=DEFAULT_DEVICE_ID,
         universal_test_product_code=UNIVERSAL_TEST_PRODUCT_CODE,
         latest_face_enrollment=serialize_face_enrollment_session(latest_face_enrollment) if latest_face_enrollment else None,
+        face_enrollment_gate=face_enrollment_gate,
     )
 
 
