@@ -256,6 +256,9 @@ void showVerificationFailed() {
 // =====================
 void startBuzzer() {
   buzzerActive = true;
+  buzzerState = true;
+  lastBuzzerToggle = millis();
+  digitalWrite(BUZZER_PIN, HIGH);
   Serial.println("Buzzer started.");
 }
 
