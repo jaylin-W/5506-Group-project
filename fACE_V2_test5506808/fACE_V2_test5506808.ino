@@ -1,0 +1,678 @@
+/**
+ * XIAO ESP32S3 Sense
+ * Buzzer + Button + LED Status + Face Detection + Servo Unlock Test
+ *
+ * Flow:
+ * 1. Buzzer starts
+ * 2. User presses button to mute buzzer
+ * 3. Yellow LED + White LED turn on
+ * 4. ESP32S3 runs face detection
+ * 5. Success: Green LED on, Yellow/White off, Servo unlocks
+ * 6. Failure: Red LED on, Yellow off, White stays on
+ */
+
+#include <ESP32Servo.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <string.h>
+
+#include <eloquent_esp32cam.h>
+#include <eloquent_esp32cam/face/detection.h>
+#include <eloquent_esp32cam/face/recognition.h>
+
+using eloq::camera;
+using eloq::face::detection;
+using eloq::face::recognition;
+
+
+// =====================
+// Pin settings
+// 不要用 camera 占用的 GPIO10-18, 38-40, 47, 48
+// =====================
+#define SERVO_PIN       1
+
+#define RED_LED_PIN     4
+#define YELLOW_LED_PIN  2
+#define GREEN_LED_PIN   3
+#define WHITE_LED_PIN   5
+
+#define BUZZER_PIN      44
+#define BUTTON_PIN      9
+
+
+// =====================
+// Website / phone alert linkage
+// =====================
+// Fill in the WiFi that your XIAO ESP32S3 can reach.
+const char* WIFI_SSID = "iot-test12";
+const char* WIFI_PASSWORD = "wdds3882";
+
+// Use the current HTTPS ngrok URL from start_with_ngrok.ps1.
+// This URL changes when ngrok restarts unless you use a reserved domain.
+const char* SERVER_BASE_URL = "https://panning-snagged-constrict.ngrok-free.dev";
+const char* DEVICE_API_TOKEN = "5506-local-device-token";
+const char* PRODUCT_CODE = "5506808";
+const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
+
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+const unsigned long DEVICE_STATUS_POLL_MS = 3000;
+
+String lastSeenRemoteUnlockAt = "";
+unsigned long lastDeviceStatusPoll = 0;
+
+
+// =====================
+// Servo settings
+// =====================
+Servo triggerServo;
+
+// 根据你们机械结构调整
+const int LOCK_ANGLE = 0;
+const int UNLOCK_ANGLE = 90;
+
+// Face detect 成功后，servo 解锁保持多久
+const unsigned long SERVO_UNLOCK_TIME_MS = 5000;
+
+bool servoUnlocked = false;
+unsigned long servoUnlockStartTime = 0;
+
+
+// =====================
+// Face detection settings
+// =====================
+const int MAX_FACE_ATTEMPTS = 8;
+const int REQUIRED_FACE_SUCCESS = 2;
+
+const unsigned long FACE_ATTEMPT_DELAY_MS = 500;
+
+
+// =====================
+// Button debounce
+// =====================
+const unsigned long DEBOUNCE_MS = 50;
+
+bool lastButtonReading = HIGH;
+bool stableButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+
+
+// =====================
+// Buzzer
+// =====================
+bool buzzerActive = true;
+bool buzzerState = false;
+unsigned long lastBuzzerToggle = 0;
+const unsigned long BUZZER_INTERVAL_MS = 300;
+
+
+// =====================
+// System state
+// =====================
+enum SystemState {
+  REMINDER_BUZZING,
+  FACE_VERIFYING,
+  FACE_SUCCESS,
+  FACE_FAILED,
+  FACE_REMOTE_UNLOCK_WAITING
+};
+
+SystemState currentState = REMINDER_BUZZING;
+
+
+// =====================
+// Servo functions
+// =====================
+void lockServo() {
+  triggerServo.write(LOCK_ANGLE);
+  servoUnlocked = false;
+  Serial.println("Servo LOCKED");
+}
+
+void unlockServo() {
+  triggerServo.write(UNLOCK_ANGLE);
+  servoUnlocked = true;
+  servoUnlockStartTime = millis();
+  Serial.println("Servo UNLOCKED");
+}
+
+void updateServoAutoLock() {
+  if (servoUnlocked && millis() - servoUnlockStartTime >= SERVO_UNLOCK_TIME_MS) {
+    lockServo();
+  }
+}
+
+
+// =====================
+// LED helper functions
+// =====================
+void allLightsOff() {
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(YELLOW_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(WHITE_LED_PIN, LOW);
+}
+
+void showWaitingVerification() {
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(YELLOW_LED_PIN, HIGH);
+  digitalWrite(WHITE_LED_PIN, HIGH);
+}
+
+void showVerificationSuccess() {
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(YELLOW_LED_PIN, LOW);
+  digitalWrite(WHITE_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, HIGH);
+}
+
+void showVerificationFailed() {
+  digitalWrite(YELLOW_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(RED_LED_PIN, HIGH);
+  digitalWrite(WHITE_LED_PIN, HIGH);
+}
+
+
+// =====================
+// Buzzer functions
+// =====================
+void startBuzzer() {
+  buzzerActive = true;
+  Serial.println("Buzzer started.");
+}
+
+void stopBuzzer() {
+  buzzerActive = false;
+  buzzerState = false;
+  digitalWrite(BUZZER_PIN, LOW);
+  Serial.println("Buzzer stopped.");
+}
+
+void updateBuzzer() {
+  if (!buzzerActive) {
+    digitalWrite(BUZZER_PIN, LOW);
+    return;
+  }
+
+  if (millis() - lastBuzzerToggle >= BUZZER_INTERVAL_MS) {
+    buzzerState = !buzzerState;
+    digitalWrite(BUZZER_PIN, buzzerState ? HIGH : LOW);
+    lastBuzzerToggle = millis();
+  }
+}
+
+
+// =====================
+// Button function
+// Button wiring:
+// One side -> BUTTON_PIN
+// Other side -> GND
+// pinMode = INPUT_PULLUP
+// Not pressed = HIGH
+// Pressed = LOW
+// =====================
+bool buttonPressedOnce() {
+  bool reading = digitalRead(BUTTON_PIN);
+
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > DEBOUNCE_MS) {
+    if (reading != stableButtonState) {
+      stableButtonState = reading;
+
+      if (stableButtonState == LOW) {
+        lastButtonReading = reading;
+        return true;
+      }
+    }
+  }
+
+  lastButtonReading = reading;
+  return false;
+}
+
+
+// =====================
+// Website API functions
+// =====================
+bool websiteConfigured() {
+  return strlen(WIFI_SSID) > 0
+      && strcmp(WIFI_SSID, "YOUR_WIFI_SSID") != 0
+      && strlen(SERVER_BASE_URL) > 0
+      && strlen(DEVICE_API_TOKEN) > 0;
+}
+
+bool ensureWiFiConnected() {
+  if (!websiteConfigured()) {
+    Serial.println("Website linkage skipped: set WIFI_SSID, WIFI_PASSWORD, SERVER_BASE_URL, and DEVICE_API_TOKEN first.");
+    return false;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  }
+
+  Serial.print("Connecting WiFi: ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startTime < WIFI_CONNECT_TIMEOUT_MS) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection failed. Website alert will not be sent.");
+    return false;
+  }
+
+  Serial.print("WiFi connected. IP: ");
+  Serial.println(WiFi.localIP());
+  return true;
+}
+
+String websiteUrl(const char* path) {
+  String base = SERVER_BASE_URL;
+  if (base.endsWith("/")) {
+    base.remove(base.length() - 1);
+  }
+  return base + path;
+}
+
+String devicePayload(const char* eventName) {
+  String payload = "{";
+  payload += "\"product_code\":\"";
+  payload += PRODUCT_CODE;
+  payload += "\",\"device_id\":\"";
+  payload += DEVICE_ID;
+  payload += "\",\"event\":\"";
+  payload += eventName;
+  payload += "\"}";
+  return payload;
+}
+
+String postToWebsite(const char* path, const String& payload, int& httpCode) {
+  httpCode = -1;
+
+  if (!ensureWiFiConnected()) {
+    return "";
+  }
+
+  String url = websiteUrl(path);
+  HTTPClient http;
+  WiFiClient wifiClient;
+  WiFiClientSecure secureClient;
+
+  bool began = false;
+  if (url.startsWith("https://")) {
+    secureClient.setInsecure();  // For ngrok/local demos. Use a root CA for production.
+    began = http.begin(secureClient, url);
+  } else {
+    began = http.begin(wifiClient, url);
+  }
+
+  if (!began) {
+    Serial.print("HTTP begin failed: ");
+    Serial.println(url);
+    return "";
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Token", DEVICE_API_TOKEN);
+
+  httpCode = http.POST(payload);
+  String response = httpCode > 0 ? http.getString() : "";
+  http.end();
+
+  Serial.print("POST ");
+  Serial.print(path);
+  Serial.print(" -> HTTP ");
+  Serial.println(httpCode);
+
+  if (response.length() > 0) {
+    Serial.print("Response: ");
+    Serial.println(response);
+  }
+
+  return response;
+}
+
+int jsonIntValue(const String& json, const char* key, int fallbackValue) {
+  String marker = String("\"") + key + "\":";
+  int start = json.indexOf(marker);
+  if (start < 0) {
+    return fallbackValue;
+  }
+
+  start += marker.length();
+  while (start < json.length() && (json[start] == ' ' || json[start] == '\t')) {
+    start++;
+  }
+
+  return json.substring(start).toInt();
+}
+
+bool jsonBoolValue(const String& json, const char* key, bool fallbackValue) {
+  String marker = String("\"") + key + "\":";
+  int start = json.indexOf(marker);
+  if (start < 0) {
+    return fallbackValue;
+  }
+
+  start += marker.length();
+  while (start < json.length() && (json[start] == ' ' || json[start] == '\t')) {
+    start++;
+  }
+
+  if (json.startsWith("true", start)) {
+    return true;
+  }
+  if (json.startsWith("false", start)) {
+    return false;
+  }
+
+  return fallbackValue;
+}
+
+String jsonStringValue(const String& json, const char* key) {
+  String marker = String("\"") + key + "\":";
+  int start = json.indexOf(marker);
+  if (start < 0) {
+    return "";
+  }
+
+  start += marker.length();
+  while (start < json.length() && (json[start] == ' ' || json[start] == '\t')) {
+    start++;
+  }
+
+  if (start >= json.length() || json.startsWith("null", start) || json[start] != '"') {
+    return "";
+  }
+
+  start++;
+  int end = json.indexOf("\"", start);
+  if (end < 0) {
+    return "";
+  }
+
+  return json.substring(start, end);
+}
+
+void continueAfterWebsitePinUnlock() {
+  Serial.println("Website PIN confirmed. Continuing pill box unlock flow.");
+  showVerificationSuccess();
+  unlockServo();
+  currentState = FACE_SUCCESS;
+}
+
+bool refreshDeviceStatus(bool baselineOnly) {
+  int httpCode = -1;
+  String response = postToWebsite("/api/face-unlock/device-status", devicePayload("status"), httpCode);
+  if (httpCode != 200 || response.length() == 0) {
+    return false;
+  }
+
+  String lastUnlockAt = jsonStringValue(response, "last_unlock_at");
+  bool unlockRequired = jsonBoolValue(response, "unlock_required", false);
+  int failedAttempts = jsonIntValue(response, "failed_attempts", 0);
+  int threshold = jsonIntValue(response, "failure_threshold", 3);
+
+  Serial.print("Server status: failed_attempts=");
+  Serial.print(failedAttempts);
+  Serial.print(" / ");
+  Serial.print(threshold);
+  Serial.print(", unlock_required=");
+  Serial.println(unlockRequired ? "true" : "false");
+
+  if (baselineOnly) {
+    lastSeenRemoteUnlockAt = lastUnlockAt;
+    return false;
+  }
+
+  if (lastUnlockAt.length() > 0 && lastUnlockAt != lastSeenRemoteUnlockAt) {
+    lastSeenRemoteUnlockAt = lastUnlockAt;
+    continueAfterWebsitePinUnlock();
+    return true;
+  }
+
+  return false;
+}
+
+bool reportFaceFailureToWebsite() {
+  int httpCode = -1;
+  String response = postToWebsite("/api/face-unlock/failure", devicePayload("face_failed"), httpCode);
+  if (httpCode != 200 || response.length() == 0) {
+    return false;
+  }
+
+  int failedAttempts = jsonIntValue(response, "failed_attempts", 0);
+  int threshold = jsonIntValue(response, "failure_threshold", 3);
+  bool unlockRequired = jsonBoolValue(response, "unlock_required", false);
+
+  Serial.print("Website face failure count: ");
+  Serial.print(failedAttempts);
+  Serial.print(" / ");
+  Serial.println(threshold);
+
+  if (unlockRequired) {
+    Serial.println("Face failed 3 times. Phone push and web alert should be active.");
+  }
+
+  return unlockRequired;
+}
+
+void reportFaceSuccessToWebsite() {
+  int httpCode = -1;
+  postToWebsite("/api/face-unlock/success", devicePayload("face_success"), httpCode);
+}
+
+void handleFaceFailureResult() {
+  bool websiteUnlockRequired = reportFaceFailureToWebsite();
+
+  if (websiteUnlockRequired) {
+    currentState = FACE_REMOTE_UNLOCK_WAITING;
+    Serial.println("Red LED ON, White LED ON. Waiting for website PIN unlock.");
+    Serial.println("Open the phone notification or website alert, enter the pill box unlock PIN, then this device will continue.");
+    return;
+  }
+
+  currentState = FACE_FAILED;
+  Serial.println("Red LED ON, White LED ON. Verification failed.");
+  Serial.println("Press button again to retry face verification.");
+}
+
+
+// =====================
+// Face detection process
+// =====================
+bool runFaceVerification() {
+  showWaitingVerification();
+
+  Serial.println();
+  Serial.println("Face verification started...");
+  Serial.println("Yellow LED ON, White LED ON");
+
+  delay(300);  // let white fill light stabilize
+
+  int successCount = 0;
+
+  for (int i = 0; i < MAX_FACE_ATTEMPTS; i++) {
+    Serial.print("Face detect attempt ");
+    Serial.print(i + 1);
+    Serial.print(" / ");
+    Serial.println(MAX_FACE_ATTEMPTS);
+
+    if (!camera.capture().isOk()) {
+      Serial.print("Capture error: ");
+      Serial.println(camera.exception.toString());
+      delay(FACE_ATTEMPT_DELAY_MS);
+      continue;
+    }
+
+    if (recognition.detect().isOk()) {
+      successCount++;
+      Serial.print("Face detected. Success count = ");
+      Serial.println(successCount);
+
+      if (successCount >= REQUIRED_FACE_SUCCESS) {
+        Serial.println("Face verification PASSED.");
+        showVerificationSuccess();
+
+        // 这里就是 face detect 成功后解锁 servo
+        unlockServo();
+
+        return true;
+      }
+    } else {
+      Serial.println("No face detected.");
+    }
+
+    delay(FACE_ATTEMPT_DELAY_MS);
+  }
+
+  Serial.println("Face verification FAILED.");
+  showVerificationFailed();
+  return false;
+}
+
+
+// =====================
+// Setup
+// =====================
+void setup() {
+  delay(3000);
+  Serial.begin(115200);
+
+  Serial.println();
+  Serial.println("=== Buzzer + Button + LEDs + Face Detect + Servo Test ===");
+
+  pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(YELLOW_LED_PIN, OUTPUT);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(WHITE_LED_PIN, OUTPUT);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  allLightsOff();
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Servo setup
+  triggerServo.setPeriodHertz(50);
+  triggerServo.attach(SERVO_PIN, 500, 2500);
+  lockServo();
+
+  // Camera setup
+  camera.pinout.xiao();
+  camera.brownout.disable();
+
+  camera.resolution.face();
+  camera.quality.high();
+
+  detection.accurate();
+
+  // 如果检测不到脸，降低到 0.30
+  // 如果没有人也触发，提高到 0.45
+  detection.confidence(0.35);
+
+  recognition.confidence(0.70);
+
+  Serial.println("Starting camera...");
+  while (!camera.begin().isOk()) {
+    Serial.print("Camera error: ");
+    Serial.println(camera.exception.toString());
+    delay(1000);
+  }
+
+  Serial.println("Starting face detector...");
+  while (!recognition.begin().isOk()) {
+    Serial.print("Detector error: ");
+    Serial.println(recognition.exception.toString());
+    delay(1000);
+  }
+
+  Serial.println("Camera OK");
+  Serial.println("Face detector OK");
+
+  if (ensureWiFiConnected()) {
+    refreshDeviceStatus(true);
+  }
+
+  currentState = REMINDER_BUZZING;
+  startBuzzer();
+
+  Serial.println();
+  Serial.println("System started.");
+  Serial.println("Buzzer is ringing.");
+  Serial.println("Press button to stop buzzer and start face detection.");
+}
+
+
+// =====================
+// Loop
+// =====================
+void loop() {
+  updateBuzzer();
+  updateServoAutoLock();
+
+  if (currentState == FACE_REMOTE_UNLOCK_WAITING
+      && millis() - lastDeviceStatusPoll >= DEVICE_STATUS_POLL_MS) {
+    lastDeviceStatusPoll = millis();
+    refreshDeviceStatus(false);
+  }
+
+  if (buttonPressedOnce()) {
+    Serial.println();
+    Serial.println("Button pressed.");
+
+    if (currentState == REMINDER_BUZZING) {
+      stopBuzzer();
+
+      currentState = FACE_VERIFYING;
+
+      bool passed = runFaceVerification();
+
+      if (passed) {
+        currentState = FACE_SUCCESS;
+        reportFaceSuccessToWebsite();
+        Serial.println("Green LED ON. Verification success. Servo unlocked.");
+      } else {
+        handleFaceFailureResult();
+      }
+    }
+
+    else if (currentState == FACE_FAILED) {
+      Serial.println("Retrying face detection...");
+
+      currentState = FACE_VERIFYING;
+
+      bool passed = runFaceVerification();
+
+      if (passed) {
+        currentState = FACE_SUCCESS;
+        reportFaceSuccessToWebsite();
+        Serial.println("Green LED ON. Verification success. Servo unlocked.");
+      } else {
+        handleFaceFailureResult();
+      }
+    }
+
+    else if (currentState == FACE_SUCCESS) {
+      Serial.println("Already verified.");
+    }
+
+    else if (currentState == FACE_REMOTE_UNLOCK_WAITING) {
+      Serial.println("Waiting for website PIN unlock. Polling server now...");
+      refreshDeviceStatus(false);
+    }
+  }
+}

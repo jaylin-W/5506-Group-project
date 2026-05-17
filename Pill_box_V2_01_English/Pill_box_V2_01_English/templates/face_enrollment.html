@@ -7,13 +7,13 @@
     <div class="face-enrollment-hero-copy">
         <span class="section-kicker">Face Recognition Enrollment</span>
         <h1>Position your face for the pill box camera</h1>
-        <p>Keep the product powered on. Slowly rotate the camera angle and keep your face centered until the enrollment completes.</p>
+        <p>The web request wakes the XIAO ESP camera. Pick up the pill box, point the camera at your face, and keep your face centered until the enrollment completes.</p>
     </div>
 
     <div class="face-enrollment-status-card">
         <span class="face-enrollment-status" data-face-enrollment-status>{{ enrollment.status }}</span>
         <h2 data-face-enrollment-title>Waiting for ESP32</h2>
-        <p data-face-enrollment-message>{{ enrollment.message or "The ESP32 will pick up this request automatically." }}</p>
+        <p data-face-enrollment-message>{{ enrollment.message or "Waiting for the ESP to wake and start camera enrollment." }}</p>
 
         <div class="face-enrollment-meter">
             <div data-face-enrollment-progress style="width: 0%;"></div>
