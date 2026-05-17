@@ -19,6 +19,20 @@
             <div data-face-enrollment-progress style="width: 0%;"></div>
         </div>
         <p class="face-enrollment-count" data-face-enrollment-count>{{ enrollment.captured_samples }} / {{ enrollment.requested_samples }} samples</p>
+        {% if enrollment.password_fallback_required %}
+            <div class="alert alert-warning py-2 mb-3">
+                Face enrollment has failed {{ enrollment.enrollment_failed_attempts }} times. Use password unlock for now, then retry enrollment when the camera is ready.
+            </div>
+        {% endif %}
+
+        <div class="face-enrollment-actions mt-3">
+            <form method="post" action="{{ url_for('start_face_enrollment') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-primary btn-sm">Restart Face Enrollment</button>
+            </form>
+            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('profile', _anchor='face-enrollment-password') }}">Use Password Unlock</a>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('profile') }}">Back to Profile</a>
+        </div>
     </div>
 </section>
 
@@ -44,7 +58,9 @@
 </section>
 
 <section class="section-block face-enrollment-photo d-none" data-face-enrollment-photo-wrap>
-    <h2 class="section-title">Saved Enrollment Photo</h2>
-    <img src="" alt="Saved face enrollment preview" data-face-enrollment-photo>
+    <h2 class="section-title">Saved Enrollment Photos</h2>
+    <div class="face-enrollment-photo-grid" data-face-enrollment-photo-grid>
+        <img src="" alt="Saved face enrollment preview" data-face-enrollment-photo>
+    </div>
 </section>
 {% endblock %}

@@ -1,8 +1,8 @@
 C:\Users\Jianl\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\flask_limiter\extension.py:336: UserWarning: Using the in-memory storage for tracking rate limits as no storage was explicitly specified. This is not recommended for production use. See: https://flask-limiter.readthedocs.io#configuring-a-storage-backend for documentation about configuring the storage backend.
   warnings.warn(
-2026-05-15 13:30:10,495 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+2026-05-16 20:48:49,458 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on all addresses (0.0.0.0)
  * Running on http://127.0.0.1:5506
- * Running on http://172.20.10.7:5506
-2026-05-15 13:30:10,495 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
-2026-05-15 13:30:28,770 - werkzeug - INFO - 127.0.0.1 - - [15/May/2026 13:30:28] "GET /login HTTP/1.1" 200 -
+ * Running on http://172.20.10.8:5506
+2026-05-16 20:48:49,459 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-05-16 20:49:11,195 - werkzeug - INFO - 127.0.0.1 - - [16/May/2026 20:49:11] "POST /api/face-enrollment/device-command HTTP/1.1" 200 -

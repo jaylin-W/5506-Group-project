@@ -17,6 +17,8 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_sleep.h>
+#include <Preferences.h>
+#include <driver/rtc_io.h>
 #include <string.h>
 
 #include <eloquent_esp32cam.h>
@@ -48,33 +50,60 @@ using eloq::face::recognition;
 // Website / phone alert linkage
 // =====================
 // Fill in the WiFi that your XIAO ESP32S3 can reach.
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// WiFi is intentionally not stored in flash, so old Preferences values cannot override these two lines.
+const char* WIFI_SSID = "iot-test12";
+const char* WIFI_PASSWORD = "wdds3882";
 
 // Single-server test mode:
 // Use the same HTTPS ngrok URL that the phone opens. Ngrok forwards it to Flask on 127.0.0.1:5000.
 // If ngrok prints a new URL after restart, update this value before uploading the sketch.
-const char* SERVER_BASE_URL = "https://panning-snagged-constrict.ngrok-free.dev";
-const char* DEVICE_API_TOKEN = "5506-local-device-token";
-const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
+const char* DEFAULT_SERVER_BASE_URL = "https://panning-snagged-constrict.ngrok-free.dev";
+const bool DEFAULT_FORCE_HTTP_FOR_ESP = false;  // Set with SET_HTTP 1 only when the target really accepts HTTP.
+const char* DEFAULT_DEVICE_API_TOKEN = "5506-local-device-token";
+const char* DEFAULT_PRODUCT_CODE = "5506DEV";  // Universal test activation code for repeated enrollment tests.
+const char* DEFAULT_DEVICE_ID = "xiao-esp32s3-sense-5506123";
 
-const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000;
+const unsigned long SERIAL_CONFIG_WINDOW_MS = 6000;
+const unsigned long SERIAL_COMMAND_IDLE_MS = 900;
+const unsigned long CONFIG_WARNING_INTERVAL_MS = 30000;
 const unsigned long DEVICE_STATUS_POLL_MS = 3000;
 const unsigned long DEVICE_REMINDER_POLL_MS = 15000;
-const int MIN_DEEP_SLEEP_SECONDS = 60;
-const int DEEP_SLEEP_WAKE_MARGIN_SECONDS = 5;
+const unsigned long FACE_ENROLLMENT_COMMAND_POLL_MS = 10000;
+const unsigned long DISPENSING_TIMEOUT_MS = 600000UL;
+const int IR_ACTIVE_LEVEL = LOW;
+const unsigned long IR_DEBOUNCE_MS = 8;
+const unsigned long IR_COUNT_COOLDOWN_MS = 120;
+const unsigned long IR_DEBUG_PRINT_INTERVAL_MS = 3000;
+const bool ENABLE_DEEP_SLEEP = true;
+const int MIN_DEEP_SLEEP_SECONDS = 30;
+const bool ENABLE_BUTTON_DEEP_SLEEP_WAKE = true;
 
 String lastSeenRemoteUnlockAt = "";
 unsigned long lastDeviceStatusPoll = 0;
 unsigned long lastReminderPoll = 0;
+unsigned long lastFaceEnrollmentPoll = 0;
 String activeReminderKey = "";
 String completedReminderKey = "";
 String activeReminderLabel = "";
 String activeReminderTime = "";
-int activeTargetQuantity = 1;
-int activeTakenQuantity = 0;
+int activeDoseQuantity = 1;
+int dispensedCount = 0;
 unsigned long dispensingStartTime = 0;
-unsigned long activeDispenseTimeoutMs = 10UL * 60UL * 1000UL;
+bool activeRequiresPasswordUnlock = false;
+
+Preferences devicePrefs;
+bool prefsReady = false;
+String wifiSsid = WIFI_SSID;
+String wifiPassword = WIFI_PASSWORD;
+String serverBaseUrl = DEFAULT_SERVER_BASE_URL;
+String deviceApiToken = DEFAULT_DEVICE_API_TOKEN;
+String productCode = DEFAULT_PRODUCT_CODE;
+String deviceId = DEFAULT_DEVICE_ID;
+bool forceHttpForEsp = DEFAULT_FORCE_HTTP_FOR_ESP;
+String serialCommandBuffer = "";
+unsigned long lastSerialCommandCharAt = 0;
+unsigned long lastConfigWarningAt = 0;
 
 
 // =====================
@@ -98,6 +127,7 @@ unsigned long servoUnlockStartTime = 0;
 // =====================
 const int MAX_FACE_ATTEMPTS = 8;
 const int REQUIRED_FACE_SUCCESS = 2;
+const int MAX_ENROLLMENT_ATTEMPT_MULTIPLIER = 5;
 
 const unsigned long FACE_ATTEMPT_DELAY_MS = 500;
 
@@ -110,9 +140,12 @@ const unsigned long DEBOUNCE_MS = 50;
 bool lastButtonReading = HIGH;
 bool stableButtonState = HIGH;
 unsigned long lastDebounceTime = 0;
-bool lastIrReading = HIGH;
-unsigned long lastIrTriggerTime = 0;
-const unsigned long IR_DEBOUNCE_MS = 250;
+
+bool lastIrReading = !IR_ACTIVE_LEVEL;
+bool stableIrState = !IR_ACTIVE_LEVEL;
+unsigned long lastIrDebounceTime = 0;
+unsigned long lastIrCountAt = 0;
+unsigned long lastIrDebugPrintAt = 0;
 
 
 // =====================
@@ -132,14 +165,25 @@ enum SystemState {
   REMINDER_BUZZING,
   FACE_VERIFYING,
   FACE_SUCCESS,
-  DISPENSING,
   FACE_FAILED,
-  FACE_REMOTE_UNLOCK_WAITING
+  FACE_REMOTE_UNLOCK_WAITING,
+  DISPENSING,
+  FACE_ENROLLING
 };
 
 SystemState currentState = REMINDER_IDLE;
 
 void allLightsOff();
+void loadRuntimeConfig();
+void printRuntimeConfig();
+void printSerialConfigHelp();
+void updateSerialConfigCommands();
+void handleSerialConfigCommand(String command);
+void probeWebsiteConnection();
+void printWakeupReason();
+bool ensureWiFiConnected();
+bool pollReminderState();
+bool pollFaceEnrollmentCommand();
 
 
 // =====================
@@ -159,9 +203,11 @@ void unlockServo() {
 }
 
 void updateServoAutoLock() {
-  if (servoUnlocked
-      && currentState != DISPENSING
-      && millis() - servoUnlockStartTime >= SERVO_UNLOCK_TIME_MS) {
+  if (currentState == DISPENSING) {
+    return;
+  }
+
+  if (servoUnlocked && millis() - servoUnlockStartTime >= SERVO_UNLOCK_TIME_MS) {
     lockServo();
     if (currentState == FACE_SUCCESS) {
       allLightsOff();
@@ -265,17 +311,295 @@ bool buttonPressedOnce() {
   return false;
 }
 
-bool medicationPassedIrOnce() {
-  bool reading = digitalRead(IR_SENSOR_PIN);
-  bool triggered = false;
 
-  if (lastIrReading == HIGH && reading == LOW && millis() - lastIrTriggerTime > IR_DEBOUNCE_MS) {
-    lastIrTriggerTime = millis();
-    triggered = true;
+bool irDoseDetectedOnce() {
+  bool reading = digitalRead(IR_SENSOR_PIN);
+  unsigned long now = millis();
+
+  if (reading != lastIrReading) {
+    lastIrDebounceTime = now;
+    lastIrReading = reading;
   }
 
+  if ((now - lastIrDebounceTime) > IR_DEBOUNCE_MS) {
+    if (reading != stableIrState) {
+      stableIrState = reading;
+      Serial.print("IR stable state: ");
+      Serial.println(stableIrState == HIGH ? "HIGH" : "LOW");
+
+      if (stableIrState == IR_ACTIVE_LEVEL) {
+        if (now - lastIrCountAt >= IR_COUNT_COOLDOWN_MS) {
+          lastIrCountAt = now;
+          return true;
+        }
+        Serial.println("IR active edge ignored by cooldown.");
+      }
+    }
+  }
+
+  return false;
+}
+
+void resetIrDetector() {
+  bool reading = digitalRead(IR_SENSOR_PIN);
   lastIrReading = reading;
-  return triggered;
+  stableIrState = reading;
+  lastIrDebounceTime = millis();
+  lastIrCountAt = 0;
+  lastIrDebugPrintAt = 0;
+
+  Serial.print("IR baseline: ");
+  Serial.print(reading == HIGH ? "HIGH" : "LOW");
+  Serial.print(", active level: ");
+  Serial.println(IR_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
+  if (reading == IR_ACTIVE_LEVEL) {
+    Serial.println("IR warning: sensor is already active at dispensing start.");
+  }
+}
+
+void printIrStatus() {
+  bool reading = digitalRead(IR_SENSOR_PIN);
+  Serial.print("IR raw=");
+  Serial.print(reading == HIGH ? "HIGH" : "LOW");
+  Serial.print(", stable=");
+  Serial.print(stableIrState == HIGH ? "HIGH" : "LOW");
+  Serial.print(", active_level=");
+  Serial.print(IR_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
+  Serial.print(", raw_active=");
+  Serial.print(reading == IR_ACTIVE_LEVEL ? "yes" : "no");
+  Serial.print(", count=");
+  Serial.print(dispensedCount);
+  Serial.print(" / ");
+  Serial.println(activeDoseQuantity);
+}
+
+
+// =====================
+// Runtime server/device config over Serial + flash
+// =====================
+void loadRuntimeConfig() {
+  if (!prefsReady) {
+    prefsReady = devicePrefs.begin("pillbox", false);
+  }
+
+  if (!prefsReady) {
+    Serial.println("Config storage unavailable. Using sketch defaults only.");
+    return;
+  }
+
+  wifiSsid = WIFI_SSID;
+  wifiPassword = WIFI_PASSWORD;
+  serverBaseUrl = devicePrefs.getString("server_url", DEFAULT_SERVER_BASE_URL);
+  deviceApiToken = devicePrefs.getString("api_token", DEFAULT_DEVICE_API_TOKEN);
+  productCode = devicePrefs.getString("product", DEFAULT_PRODUCT_CODE);
+  deviceId = devicePrefs.getString("device_id", DEFAULT_DEVICE_ID);
+  forceHttpForEsp = devicePrefs.getBool("force_http", DEFAULT_FORCE_HTTP_FOR_ESP);
+}
+
+String effectiveServerBaseUrl() {
+  String base = serverBaseUrl;
+  if (forceHttpForEsp && base.startsWith("https://")) {
+    base.replace("https://", "http://");
+  }
+  return base;
+}
+
+void printRuntimeConfig() {
+  Serial.println();
+  Serial.println("Current runtime config:");
+  Serial.print("  WiFi SSID: ");
+  Serial.println(wifiSsid);
+  Serial.print("  WiFi password: ");
+  Serial.println(wifiPassword.length() > 0 && wifiPassword != "YOUR_WIFI_PASSWORD" ? "[set from code]" : "[not set]");
+  Serial.print("  Server URL: ");
+  Serial.println(serverBaseUrl);
+  Serial.print("  Effective URL: ");
+  Serial.println(effectiveServerBaseUrl());
+  Serial.print("  Force HTTP: ");
+  Serial.println(forceHttpForEsp ? "true" : "false");
+  Serial.print("  Product code: ");
+  Serial.println(productCode);
+  Serial.print("  Device ID: ");
+  Serial.println(deviceId);
+  Serial.print("  API token: ");
+  Serial.println(deviceApiToken.length() > 0 ? "[saved]" : "[not set]");
+}
+
+void printSerialConfigHelp() {
+  Serial.println();
+  Serial.println("Runtime config commands:");
+  Serial.println("  SHOW_CONFIG");
+  Serial.println("  SET_URL https://your-ngrok-url");
+  Serial.println("  SET_HTTP 0        (recommended for ngrok HTTPS)");
+  Serial.println("  SET_HTTP 1        (only if the server really accepts plain HTTP)");
+  Serial.println("  SET_TOKEN your-device-api-token");
+  Serial.println("  SET_PRODUCT 5506DEV");
+  Serial.println("  SET_DEVICE xiao-esp32s3-sense-5506123");
+  Serial.println("  RECONNECT");
+  Serial.println("  POLL");
+  Serial.println("  IR_STATUS");
+  Serial.println("  CLEAR_CONFIG");
+}
+
+bool parseConfigBool(String value, bool fallbackValue) {
+  value.trim();
+  value.toLowerCase();
+
+  if (value == "1" || value == "true" || value == "on" || value == "yes") {
+    return true;
+  }
+  if (value == "0" || value == "false" || value == "off" || value == "no") {
+    return false;
+  }
+
+  return fallbackValue;
+}
+
+void saveStringConfig(const char* key, const String& value) {
+  if (prefsReady) {
+    devicePrefs.putString(key, value);
+  }
+}
+
+void saveBoolConfig(const char* key, bool value) {
+  if (prefsReady) {
+    devicePrefs.putBool(key, value);
+  }
+}
+
+void resetRuntimeConfigToDefaults() {
+  wifiSsid = WIFI_SSID;
+  wifiPassword = WIFI_PASSWORD;
+  serverBaseUrl = DEFAULT_SERVER_BASE_URL;
+  deviceApiToken = DEFAULT_DEVICE_API_TOKEN;
+  productCode = DEFAULT_PRODUCT_CODE;
+  deviceId = DEFAULT_DEVICE_ID;
+  forceHttpForEsp = DEFAULT_FORCE_HTTP_FOR_ESP;
+}
+
+void handleSerialConfigCommand(String command) {
+  command.trim();
+  if (command.length() == 0) {
+    return;
+  }
+
+  if (command == "HELP" || command == "?") {
+    printSerialConfigHelp();
+    return;
+  }
+
+  if (command == "SHOW_CONFIG") {
+    printRuntimeConfig();
+    return;
+  }
+
+  if (command == "CLEAR_CONFIG") {
+    if (prefsReady) {
+      devicePrefs.clear();
+    }
+    resetRuntimeConfigToDefaults();
+    WiFi.disconnect(true);
+    Serial.println("Runtime config cleared. Defaults restored.");
+    printRuntimeConfig();
+    return;
+  }
+
+  if (command == "RECONNECT") {
+    WiFi.disconnect(true);
+    delay(300);
+    ensureWiFiConnected();
+    return;
+  }
+
+  if (command == "POLL") {
+    pollFaceEnrollmentCommand();
+    pollReminderState();
+    return;
+  }
+
+  if (command == "IR_STATUS") {
+    printIrStatus();
+    return;
+  }
+
+  if (command.startsWith("SET_URL ")) {
+    serverBaseUrl = command.substring(strlen("SET_URL "));
+    serverBaseUrl.trim();
+    saveStringConfig("server_url", serverBaseUrl);
+    lastReminderPoll = 0;
+    lastFaceEnrollmentPoll = 0;
+    Serial.print("Server URL saved. Effective URL: ");
+    Serial.println(effectiveServerBaseUrl());
+    return;
+  }
+
+  if (command.startsWith("SET_HTTP ")) {
+    forceHttpForEsp = parseConfigBool(command.substring(strlen("SET_HTTP ")), forceHttpForEsp);
+    saveBoolConfig("force_http", forceHttpForEsp);
+    Serial.print("Force HTTP saved: ");
+    Serial.println(forceHttpForEsp ? "true" : "false");
+    Serial.print("Effective URL: ");
+    Serial.println(effectiveServerBaseUrl());
+    return;
+  }
+
+  if (command.startsWith("SET_TOKEN ")) {
+    deviceApiToken = command.substring(strlen("SET_TOKEN "));
+    deviceApiToken.trim();
+    saveStringConfig("api_token", deviceApiToken);
+    Serial.println("Device API token saved.");
+    return;
+  }
+
+  if (command.startsWith("SET_PRODUCT ")) {
+    productCode = command.substring(strlen("SET_PRODUCT "));
+    productCode.trim();
+    saveStringConfig("product", productCode);
+    Serial.print("Product code saved: ");
+    Serial.println(productCode);
+    return;
+  }
+
+  if (command.startsWith("SET_DEVICE ")) {
+    deviceId = command.substring(strlen("SET_DEVICE "));
+    deviceId.trim();
+    saveStringConfig("device_id", deviceId);
+    Serial.print("Device ID saved: ");
+    Serial.println(deviceId);
+    return;
+  }
+
+  Serial.print("Unknown config command: ");
+  Serial.println(command);
+  Serial.println("Send HELP to list commands.");
+}
+
+void updateSerialConfigCommands() {
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    lastSerialCommandCharAt = millis();
+
+    if (c == '\n' || c == '\r') {
+      if (serialCommandBuffer.length() > 0) {
+        handleSerialConfigCommand(serialCommandBuffer);
+        serialCommandBuffer = "";
+      }
+      continue;
+    }
+
+    if (serialCommandBuffer.length() < 240) {
+      serialCommandBuffer += c;
+    } else {
+      serialCommandBuffer = "";
+      Serial.println("Serial config command too long. Buffer cleared.");
+    }
+  }
+
+  if (serialCommandBuffer.length() > 0
+      && millis() - lastSerialCommandCharAt >= SERIAL_COMMAND_IDLE_MS) {
+    handleSerialConfigCommand(serialCommandBuffer);
+    serialCommandBuffer = "";
+  }
 }
 
 
@@ -283,15 +607,95 @@ bool medicationPassedIrOnce() {
 // Website API functions
 // =====================
 bool websiteConfigured() {
-  return strlen(WIFI_SSID) > 0
-      && strcmp(WIFI_SSID, "YOUR_WIFI_SSID") != 0
-      && strlen(SERVER_BASE_URL) > 0
-      && strlen(DEVICE_API_TOKEN) > 0;
+  bool shouldPrint = lastConfigWarningAt == 0 || millis() - lastConfigWarningAt >= CONFIG_WARNING_INTERVAL_MS;
+  bool ok = true;
+
+  if (wifiSsid.length() == 0 || wifiSsid == "YOUR_WIFI_SSID") {
+    if (shouldPrint) {
+      Serial.println("Config missing: WiFi SSID. Edit WIFI_SSID in the sketch and upload again.");
+    }
+    ok = false;
+  }
+
+  if (wifiPassword.length() == 0 || wifiPassword == "YOUR_WIFI_PASSWORD") {
+    if (shouldPrint) {
+      Serial.println("Config missing: WiFi password. Edit WIFI_PASSWORD in the sketch and upload again.");
+    }
+    ok = false;
+  }
+
+  if (serverBaseUrl.length() == 0) {
+    if (shouldPrint) {
+      Serial.println("Config missing: Server URL. Use SET_URL https://your-ngrok-url.");
+    }
+    ok = false;
+  }
+
+  if (deviceApiToken.length() == 0) {
+    if (shouldPrint) {
+      Serial.println("Config missing: Device API token. Use SET_TOKEN your-device-api-token.");
+    }
+    ok = false;
+  }
+
+  if (!ok && shouldPrint) {
+    lastConfigWarningAt = millis();
+  }
+
+  return ok;
+}
+
+const char* wifiStatusName(wl_status_t status) {
+  switch (status) {
+    case WL_IDLE_STATUS:
+      return "WL_IDLE_STATUS";
+    case WL_NO_SSID_AVAIL:
+      return "WL_NO_SSID_AVAIL";
+    case WL_SCAN_COMPLETED:
+      return "WL_SCAN_COMPLETED";
+    case WL_CONNECTED:
+      return "WL_CONNECTED";
+    case WL_CONNECT_FAILED:
+      return "WL_CONNECT_FAILED";
+    case WL_CONNECTION_LOST:
+      return "WL_CONNECTION_LOST";
+    case WL_DISCONNECTED:
+      return "WL_DISCONNECTED";
+    default:
+      return "WL_UNKNOWN";
+  }
+}
+
+void scanForConfiguredWiFi() {
+  Serial.println("Scanning nearby WiFi networks...");
+  int networkCount = WiFi.scanNetworks(false, true);
+  bool found = false;
+
+  if (networkCount <= 0) {
+    Serial.println("No WiFi networks found by scan.");
+    return;
+  }
+
+  for (int i = 0; i < networkCount; i++) {
+    String ssid = WiFi.SSID(i);
+    if (ssid == wifiSsid) {
+      found = true;
+      Serial.print("Found configured SSID. RSSI=");
+      Serial.print(WiFi.RSSI(i));
+      Serial.print(" dBm, channel=");
+      Serial.println(WiFi.channel(i));
+    }
+  }
+
+  if (!found) {
+    Serial.println("Configured SSID was not found. Check hotspot name, 2.4GHz compatibility, and whether Personal Hotspot is visible.");
+  }
 }
 
 bool ensureWiFiConnected() {
   if (!websiteConfigured()) {
-    Serial.println("Website linkage skipped: set WIFI_SSID, WIFI_PASSWORD, SERVER_BASE_URL, and DEVICE_API_TOKEN first.");
+    Serial.println("Website linkage skipped: set WiFi in code, plus Server URL and Device API token.");
+    Serial.println("Send HELP in Serial Monitor to configure this device without uploading again.");
     return false;
   }
 
@@ -300,10 +704,16 @@ bool ensureWiFiConnected() {
   }
 
   Serial.print("Connecting WiFi: ");
-  Serial.println(WIFI_SSID);
+  Serial.println(wifiSsid);
 
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.setSleep(false);
+  WiFi.disconnect(true, true);
+  delay(500);
+  scanForConfiguredWiFi();
+
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
 
   unsigned long startTime = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startTime < WIFI_CONNECT_TIMEOUT_MS) {
@@ -313,27 +723,136 @@ bool ensureWiFiConnected() {
   Serial.println();
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi connection failed. Website alert will not be sent.");
+    Serial.print("WiFi connection failed. Final status: ");
+    Serial.println(wifiStatusName(WiFi.status()));
+    Serial.println("Website alert will not be sent.");
     return false;
   }
 
   Serial.print("WiFi connected. IP: ");
   Serial.println(WiFi.localIP());
+  Serial.print("Gateway: ");
+  Serial.println(WiFi.gatewayIP());
+  Serial.print("DNS: ");
+  Serial.println(WiFi.dnsIP());
+  probeWebsiteConnection();
   return true;
 }
 
 String websiteUrl(const char* path) {
-  String base = SERVER_BASE_URL;
+  String base = effectiveServerBaseUrl();
   if (base.endsWith("/")) {
     base.remove(base.length() - 1);
   }
   return base + path;
 }
 
+String websiteHost() {
+  String base = effectiveServerBaseUrl();
+  base.replace("https://", "");
+  base.replace("http://", "");
+  int slash = base.indexOf("/");
+  if (slash >= 0) {
+    base = base.substring(0, slash);
+  }
+  int colon = base.indexOf(":");
+  if (colon >= 0) {
+    base = base.substring(0, colon);
+  }
+  return base;
+}
+
+int websitePort() {
+  String base = effectiveServerBaseUrl();
+  bool https = base.startsWith("https://");
+  if (base.startsWith("https://")) {
+    base.replace("https://", "");
+  } else if (base.startsWith("http://")) {
+    base.replace("http://", "");
+  }
+
+  int slash = base.indexOf("/");
+  if (slash >= 0) {
+    base = base.substring(0, slash);
+  }
+
+  int colon = base.indexOf(":");
+  if (colon >= 0) {
+    int explicitPort = base.substring(colon + 1).toInt();
+    if (explicitPort > 0) {
+      return explicitPort;
+    }
+  }
+
+  return https ? 443 : 80;
+}
+
+void probeWebsiteConnection() {
+  String host = websiteHost();
+  int port = websitePort();
+
+  Serial.print("Website host: ");
+  Serial.println(host);
+  Serial.print("Website port: ");
+  Serial.println(port);
+
+  IPAddress resolvedIp;
+  if (WiFi.hostByName(host.c_str(), resolvedIp)) {
+    Serial.print("Website DNS resolved IP: ");
+    Serial.println(resolvedIp);
+  } else {
+    Serial.println("Website DNS lookup failed.");
+    return;
+  }
+
+  if (port == 443) {
+    WiFiClientSecure probeClient;
+    probeClient.setInsecure();
+    probeClient.setTimeout(8000);
+    Serial.println("Testing HTTPS/TLS connection to website host...");
+    if (probeClient.connect(host.c_str(), port)) {
+      Serial.println("HTTPS/TLS connection probe OK.");
+      probeClient.stop();
+    } else {
+      Serial.println("HTTPS/TLS connection probe FAILED. Try another WiFi/hotspot, refresh ngrok, or test HTTP mode.");
+    }
+  } else {
+    WiFiClient probeClient;
+    probeClient.setTimeout(8000);
+    Serial.println("Testing HTTP TCP connection to website host...");
+    if (probeClient.connect(host.c_str(), port)) {
+      Serial.println("HTTP TCP connection probe OK.");
+      probeClient.stop();
+    } else {
+      Serial.println("HTTP TCP connection probe FAILED.");
+    }
+  }
+}
+
+String jsonEscape(const String& value) {
+  String escaped = "";
+  for (size_t i = 0; i < value.length(); i++) {
+    char c = value[i];
+    if (c == '"' || c == '\\') {
+      escaped += '\\';
+      escaped += c;
+    } else if (c == '\n') {
+      escaped += "\\n";
+    } else if (c == '\r') {
+      escaped += "\\r";
+    } else {
+      escaped += c;
+    }
+  }
+  return escaped;
+}
+
 String devicePayload(const char* eventName) {
   String payload = "{";
   payload += "\"device_id\":\"";
-  payload += DEVICE_ID;
+  payload += deviceId;
+  payload += "\",\"product_code\":\"";
+  payload += productCode;
   payload += "\",\"event\":\"";
   payload += eventName;
   payload += "\"";
@@ -342,7 +861,9 @@ String devicePayload(const char* eventName) {
     payload += activeReminderKey;
     payload += "\"";
     payload += ",\"taken_quantity\":";
-    payload += String(activeTakenQuantity);
+    payload += String(dispensedCount);
+    payload += ",\"dose_quantity\":";
+    payload += String(activeDoseQuantity);
   }
   payload += "}";
   return payload;
@@ -356,6 +877,8 @@ String postToWebsite(const char* path, const String& payload, int& httpCode) {
   }
 
   String url = websiteUrl(path);
+  Serial.print("Request URL: ");
+  Serial.println(url);
   HTTPClient http;
   WiFiClient wifiClient;
   WiFiClientSecure secureClient;
@@ -375,9 +898,64 @@ String postToWebsite(const char* path, const String& payload, int& httpCode) {
   }
 
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-Token", DEVICE_API_TOKEN);
+  http.addHeader("X-Device-Token", deviceApiToken);
 
   httpCode = http.POST(payload);
+  String response = httpCode > 0 ? http.getString() : "";
+  http.end();
+
+  Serial.print("POST ");
+  Serial.print(path);
+  Serial.print(" -> HTTP ");
+  Serial.println(httpCode);
+
+  if (httpCode < 0) {
+    Serial.print("HTTP error: ");
+    Serial.println(http.errorToString(httpCode));
+  }
+
+  if (response.length() > 0) {
+    Serial.print("Response: ");
+    Serial.println(response);
+  }
+
+  return response;
+}
+
+String postBinaryToWebsite(const String& path, uint8_t* data, size_t length, const char* contentType, int& httpCode) {
+  httpCode = -1;
+
+  if (!ensureWiFiConnected()) {
+    return "";
+  }
+
+  String url = websiteUrl(path.c_str());
+  Serial.print("Request URL: ");
+  Serial.println(url);
+  HTTPClient http;
+  WiFiClient wifiClient;
+  WiFiClientSecure secureClient;
+
+  bool began = false;
+  if (url.startsWith("https://")) {
+    secureClient.setInsecure();
+    began = http.begin(secureClient, url);
+  } else {
+    began = http.begin(wifiClient, url);
+  }
+
+  if (!began) {
+    Serial.print("HTTP begin failed: ");
+    Serial.println(url);
+    return "";
+  }
+
+  http.addHeader("Content-Type", contentType);
+  http.addHeader("X-Device-Token", deviceApiToken);
+  http.addHeader("X-Device-Id", deviceId);
+  http.addHeader("X-Product-Code", productCode);
+
+  httpCode = http.POST(data, length);
   String response = httpCode > 0 ? http.getString() : "";
   http.end();
 
@@ -461,115 +1039,127 @@ String jsonStringValue(const String& json, const char* key) {
   return json.substring(start, end);
 }
 
+void clearActiveReminderState() {
+  activeReminderKey = "";
+  activeReminderLabel = "";
+  activeReminderTime = "";
+  activeDoseQuantity = 1;
+  dispensedCount = 0;
+  dispensingStartTime = 0;
+  activeRequiresPasswordUnlock = false;
+}
+
 bool completeActiveReminderOnWebsite() {
   if (activeReminderKey.length() == 0) {
     return false;
   }
 
+  String closingReminderKey = activeReminderKey;
   int httpCode = -1;
   String response = postToWebsite("/api/device/reminder-complete", devicePayload("reminder_completed"), httpCode);
-  if (httpCode != 200 || response.length() == 0) {
-    return false;
-  }
-
-  completedReminderKey = activeReminderKey;
+  bool reported = httpCode == 200 && response.length() > 0;
+  completedReminderKey = closingReminderKey;
   Serial.print("Reminder completed: ");
-  Serial.println(activeReminderKey);
+  Serial.println(closingReminderKey);
+  if (!reported) {
+    Serial.println("Warning: website did not confirm reminder completion.");
+  }
 
-  activeReminderKey = "";
-  activeReminderLabel = "";
-  activeReminderTime = "";
-  activeTargetQuantity = 1;
-  activeTakenQuantity = 0;
-  dispensingStartTime = 0;
-  activeDispenseTimeoutMs = 10UL * 60UL * 1000UL;
-  return true;
+  clearActiveReminderState();
+  return reported;
 }
 
-void enterDeepSleepForSeconds(int seconds) {
-  int sleepSeconds = max(MIN_DEEP_SLEEP_SECONDS, seconds - DEEP_SLEEP_WAKE_MARGIN_SECONDS);
-  Serial.print("No active reminder. Entering deep sleep for ");
-  Serial.print(sleepSeconds);
-  Serial.println(" seconds.");
-  Serial.flush();
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
-  esp_deep_sleep_start();
-}
-
-bool reportMedicationDispensedToWebsite() {
+bool timeoutActiveReminderOnWebsite() {
   if (activeReminderKey.length() == 0) {
     return false;
   }
 
+  String closingReminderKey = activeReminderKey;
   int httpCode = -1;
-  String response = postToWebsite("/api/device/medication-dispensed", devicePayload("medication_dispensed"), httpCode);
-  if (httpCode != 200 || response.length() == 0) {
-    return false;
+  String response = postToWebsite("/api/device/reminder-timeout", devicePayload("reminder_timeout"), httpCode);
+  bool reported = httpCode == 200 && response.length() > 0;
+  completedReminderKey = closingReminderKey;
+  Serial.print("Reminder missed after timeout: ");
+  Serial.println(closingReminderKey);
+  if (!reported) {
+    Serial.println("Warning: website did not confirm reminder timeout.");
   }
 
-  activeTakenQuantity = jsonIntValue(response, "taken_quantity", activeTakenQuantity);
-  activeTargetQuantity = jsonIntValue(response, "target_quantity", activeTargetQuantity);
-
-  Serial.print("IR count synced: ");
-  Serial.print(activeTakenQuantity);
-  Serial.print(" / ");
-  Serial.println(activeTargetQuantity);
-  return jsonBoolValue(response, "completed", activeTakenQuantity >= activeTargetQuantity);
+  clearActiveReminderState();
+  return reported;
 }
 
-bool reportDispenseTimeoutToWebsite() {
-  if (activeReminderKey.length() == 0) {
-    return false;
-  }
-
-  int httpCode = -1;
-  String response = postToWebsite("/api/device/reminder-timeout", devicePayload("dispense_timeout"), httpCode);
-  return httpCode == 200 && response.length() > 0;
-}
-
-void resetActiveReminderLocally() {
-  completedReminderKey = activeReminderKey;
-  activeReminderKey = "";
-  activeReminderLabel = "";
-  activeReminderTime = "";
-  activeTargetQuantity = 1;
-  activeTakenQuantity = 0;
-  dispensingStartTime = 0;
-  activeDispenseTimeoutMs = 10UL * 60UL * 1000UL;
-}
-
-void startDispensingFlow() {
+void startDispensingFlow(const char* source) {
+  dispensedCount = 0;
   dispensingStartTime = millis();
   currentState = DISPENSING;
-}
+  showVerificationSuccess();
+  resetIrDetector();
+  unlockServo();
 
-void finishDispensingFlow() {
-  completeActiveReminderOnWebsite();
-  lockServo();
-  allLightsOff();
-  currentState = REMINDER_IDLE;
-  lastReminderPoll = 0;
-  Serial.println("Dose quantity reached. Servo locked. Waiting for the next database reminder.");
-}
-
-void timeoutDispensingFlow() {
-  Serial.println("Dispense timeout reached. No enough medication passed the IR sensor.");
-  reportDispenseTimeoutToWebsite();
-  lockServo();
-  allLightsOff();
-  resetActiveReminderLocally();
-  currentState = REMINDER_IDLE;
-  lastReminderPoll = 0;
-  Serial.println("Reminder marked missed. Waiting for the next database reminder or deep sleep window.");
+  Serial.print("DISPENSING started by ");
+  Serial.println(source);
+  Serial.print("Dose target: ");
+  Serial.println(activeDoseQuantity);
+  Serial.print("IR sensor is counting pills for up to ");
+  Serial.print(DISPENSING_TIMEOUT_MS / 1000);
+  Serial.println(" seconds.");
 }
 
 void continueAfterWebsitePinUnlock() {
-  Serial.println("Website PIN confirmed. Continuing pill box unlock flow.");
-  showVerificationSuccess();
-  unlockServo();
-  startDispensingFlow();
+  Serial.println("Website PIN confirmed. Continuing pill box dispensing flow.");
+  if (activeReminderKey.length() == 0) {
+    Serial.println("No active reminder is stored locally. Starting dispensing with the current dose target.");
+    activeDoseQuantity = max(1, activeDoseQuantity);
+    startDispensingFlow("website PIN unlock without local reminder");
+    return;
+  }
+  startDispensingFlow("website PIN unlock");
+}
+
+void printWakeupReason() {
+  esp_sleep_wakeup_cause_t wakeupReason = esp_sleep_get_wakeup_cause();
+
+  Serial.print("Wakeup reason: ");
+  switch (wakeupReason) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+      Serial.println("button");
+      break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+      Serial.println("timer");
+      break;
+    default:
+      Serial.println("power-on/reset");
+      break;
+  }
+}
+
+void enterDeepSleepSeconds(int sleepSeconds) {
+  if (!ENABLE_DEEP_SLEEP || sleepSeconds < MIN_DEEP_SLEEP_SECONDS) {
+    return;
+  }
+
+  Serial.print("Entering deep sleep for ");
+  Serial.print(sleepSeconds);
+  Serial.println(" seconds until the next planned wake window.");
+
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
+
+  if (ENABLE_BUTTON_DEEP_SLEEP_WAKE) {
+    gpio_num_t wakeButton = (gpio_num_t) BUTTON_PIN;
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    rtc_gpio_pullup_en(wakeButton);
+    rtc_gpio_pulldown_dis(wakeButton);
+    esp_sleep_enable_ext0_wakeup(wakeButton, 0);
+    Serial.print("Button deep-sleep wake enabled on GPIO");
+    Serial.println(BUTTON_PIN);
+  }
+
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  esp_deep_sleep_start();
 }
 
 bool pollReminderState() {
@@ -581,10 +1171,24 @@ bool pollReminderState() {
 
   String action = jsonStringValue(response, "device_action");
   String reminderKey = jsonStringValue(response, "reminder_key");
-  bool sleepRecommended = jsonBoolValue(response, "sleep_recommended", false);
-  int secondsUntilNextWindow = jsonIntValue(response, "seconds_until_next_window", 0);
+  int doseQuantity = jsonIntValue(response, "dose_quantity", jsonIntValue(response, "target_quantity", 1));
+  int sleepSeconds = jsonIntValue(response, "sleep_seconds", 0);
+  bool faceEnrollmentCompleted = jsonBoolValue(response, "has_completed", true);
+  String passwordRequiredReason = jsonStringValue(response, "password_required_reason");
+  bool passwordFallbackRequired = jsonBoolValue(response, "password_fallback_required", false);
+  bool requiresPasswordUnlock = !faceEnrollmentCompleted
+      || passwordRequiredReason == "face_enrollment_missing"
+      || passwordRequiredReason == "face_unlock_required"
+      || passwordFallbackRequired;
 
   if (action == "wait_for_pin") {
+    if (reminderKey.length() > 0 && activeReminderKey.length() == 0) {
+      activeReminderKey = reminderKey;
+      activeReminderLabel = jsonStringValue(response, "supplement_name");
+      activeReminderTime = jsonStringValue(response, "take_time");
+      activeDoseQuantity = max(1, doseQuantity);
+      activeRequiresPasswordUnlock = requiresPasswordUnlock;
+    }
     if (currentState == REMINDER_IDLE || currentState == FACE_FAILED) {
       currentState = FACE_REMOTE_UNLOCK_WAITING;
       showVerificationFailed();
@@ -602,9 +1206,9 @@ bool pollReminderState() {
       activeReminderKey = reminderKey;
       activeReminderLabel = jsonStringValue(response, "supplement_name");
       activeReminderTime = jsonStringValue(response, "take_time");
-      activeTargetQuantity = jsonIntValue(response, "target_quantity", jsonIntValue(response, "dose_quantity", 1));
-      activeTakenQuantity = jsonIntValue(response, "taken_quantity", 0);
-      activeDispenseTimeoutMs = (unsigned long) jsonIntValue(response, "dispense_timeout_seconds", 600) * 1000UL;
+      activeDoseQuantity = max(1, doseQuantity);
+      activeRequiresPasswordUnlock = requiresPasswordUnlock;
+      dispensedCount = 0;
       currentState = REMINDER_BUZZING;
       startBuzzer();
 
@@ -614,20 +1218,20 @@ bool pollReminderState() {
       Serial.print(activeReminderLabel.length() > 0 ? activeReminderLabel : "Supplement");
       Serial.print(" at ");
       Serial.println(activeReminderTime.length() > 0 ? activeReminderTime : "scheduled time");
-      Serial.print("Dose quantity target: ");
-      Serial.println(activeTargetQuantity);
-      Serial.print("Dispense timeout seconds: ");
-      Serial.println(activeDispenseTimeoutMs / 1000UL);
-      Serial.println("Buzzer is ringing. Press button to start face detection.");
+      Serial.print("Dose quantity: ");
+      Serial.println(activeDoseQuantity);
+      if (activeRequiresPasswordUnlock) {
+        Serial.println("Buzzer is ringing. Press button to use website password unlock.");
+      } else {
+        Serial.println("Buzzer is ringing. Press button to start face detection.");
+      }
     }
     return true;
   }
 
   if (action == "idle" && currentState == REMINDER_IDLE) {
     Serial.println("No database reminder is due now.");
-    if (sleepRecommended && secondsUntilNextWindow >= MIN_DEEP_SLEEP_SECONDS) {
-      enterDeepSleepForSeconds(secondsUntilNextWindow);
-    }
+    enterDeepSleepSeconds(sleepSeconds);
   }
 
   return true;
@@ -664,6 +1268,155 @@ bool refreshDeviceStatus(bool baselineOnly) {
   }
 
   return false;
+}
+
+bool reportFaceEnrollmentResult(const String& sessionId, const char* status, int capturedSamples, const String& message) {
+  String payload = "{";
+  payload += "\"device_id\":\"";
+  payload += deviceId;
+  payload += "\",\"event\":\"face_enrollment_result\"";
+  payload += ",\"session_id\":\"";
+  payload += jsonEscape(sessionId);
+  payload += "\",\"status\":\"";
+  payload += status;
+  payload += "\",\"captured_samples\":";
+  payload += String(capturedSamples);
+  payload += ",\"message\":\"";
+  payload += jsonEscape(message);
+  payload += "\"}";
+
+  int httpCode = -1;
+  String response = postToWebsite("/api/face-enrollment/device-result", payload, httpCode);
+  return httpCode == 200 && response.length() > 0;
+}
+
+bool uploadCurrentEnrollmentPhoto(const String& sessionId, int photoIndex) {
+  if (!camera.hasFrame() || camera.frame == NULL || camera.frame->buf == NULL || camera.frame->len == 0) {
+    Serial.println("No camera frame available for enrollment photo upload.");
+    return false;
+  }
+
+  String path = "/api/face-enrollment/device-photo/";
+  path += sessionId;
+  path += "?device_id=";
+  path += deviceId;
+  path += "&product_code=";
+  path += productCode;
+  path += "&photo_index=";
+  path += String(photoIndex);
+  path += "&device_photo_id=esp32s3-";
+  path += sessionId;
+  path += "-";
+  path += String(photoIndex);
+
+  int httpCode = -1;
+  String response = postBinaryToWebsite(path, camera.frame->buf, camera.frame->len, "image/jpeg", httpCode);
+  return httpCode == 200 && response.length() > 0;
+}
+
+void runFaceEnrollment(const String& sessionId, const String& personName, int requestedSamples) {
+  if (sessionId.length() == 0 || personName.length() == 0) {
+    return;
+  }
+
+  stopBuzzer();
+  lockServo();
+  showWaitingVerification();
+  currentState = FACE_ENROLLING;
+
+  int targetSamples = max(1, requestedSamples);
+  int maxAttempts = max(targetSamples * MAX_ENROLLMENT_ATTEMPT_MULTIPLIER, targetSamples);
+  int capturedSamples = 0;
+
+  Serial.println();
+  Serial.print("Face enrollment started for ");
+  Serial.print(personName);
+  Serial.print(" session ");
+  Serial.println(sessionId);
+
+  reportFaceEnrollmentResult(sessionId, "started", 0, "ESP32 is enrolling face samples.");
+
+  for (int attempt = 1; attempt <= maxAttempts && capturedSamples < targetSamples; attempt++) {
+    Serial.print("Enrollment capture attempt ");
+    Serial.print(attempt);
+    Serial.print(" / ");
+    Serial.println(maxAttempts);
+
+    if (!camera.capture().isOk()) {
+      Serial.print("Capture error: ");
+      Serial.println(camera.exception.toString());
+      delay(FACE_ATTEMPT_DELAY_MS);
+      continue;
+    }
+
+    if (!recognition.detect().isOk()) {
+      Serial.println("No face detected for enrollment.");
+      delay(FACE_ATTEMPT_DELAY_MS);
+      continue;
+    }
+
+    if (!recognition.enroll(personName).isOk()) {
+      Serial.print("Enrollment error: ");
+      Serial.println(recognition.exception.toString());
+      delay(FACE_ATTEMPT_DELAY_MS);
+      continue;
+    }
+
+    capturedSamples++;
+    Serial.print("Enrollment sample saved locally: ");
+    Serial.print(capturedSamples);
+    Serial.print(" / ");
+    Serial.println(targetSamples);
+
+    if (uploadCurrentEnrollmentPhoto(sessionId, capturedSamples)) {
+      Serial.println("Enrollment photo uploaded.");
+    } else {
+      Serial.println("Enrollment photo upload failed.");
+    }
+
+    reportFaceEnrollmentResult(
+      sessionId,
+      "started",
+      capturedSamples,
+      "Captured enrollment sample " + String(capturedSamples) + " of " + String(targetSamples) + "."
+    );
+    delay(FACE_ATTEMPT_DELAY_MS);
+  }
+
+  if (capturedSamples >= targetSamples) {
+    showVerificationSuccess();
+    reportFaceEnrollmentResult(sessionId, "completed", capturedSamples, "Face enrollment completed and photos were linked to this account.");
+    Serial.println("Face enrollment completed.");
+  } else {
+    showVerificationFailed();
+    reportFaceEnrollmentResult(sessionId, "failed", capturedSamples, "Face enrollment failed before enough samples were captured.");
+    Serial.println("Face enrollment failed.");
+  }
+
+  delay(800);
+  allLightsOff();
+  currentState = REMINDER_IDLE;
+  lastFaceEnrollmentPoll = millis();
+  lastReminderPoll = 0;
+}
+
+bool pollFaceEnrollmentCommand() {
+  int httpCode = -1;
+  String response = postToWebsite("/api/face-enrollment/device-command", devicePayload("poll_face_enrollment"), httpCode);
+  if (httpCode != 200 || response.length() == 0) {
+    return false;
+  }
+
+  String command = jsonStringValue(response, "command");
+  if (command != "enroll") {
+    return false;
+  }
+
+  String sessionId = jsonStringValue(response, "session_id");
+  String personName = jsonStringValue(response, "person_name");
+  int requestedSamples = jsonIntValue(response, "requested_samples", 3);
+  runFaceEnrollment(sessionId, personName, requestedSamples);
+  return true;
 }
 
 bool reportFaceFailureToWebsite() {
@@ -707,6 +1460,55 @@ void handleFaceFailureResult() {
   currentState = FACE_FAILED;
   Serial.println("Red LED ON, White LED ON. Verification failed.");
   Serial.println("Press button again to retry face verification.");
+}
+
+
+void finishDispensingSuccess() {
+  Serial.println("Dose quantity reached. Completing reminder and locking servo.");
+  completeActiveReminderOnWebsite();
+  lockServo();
+  allLightsOff();
+  currentState = REMINDER_IDLE;
+  lastReminderPoll = 0;
+  pollReminderState();
+}
+
+void finishDispensingTimeout() {
+  Serial.println("Dispensing timeout. Marking this reminder as missed and locking servo.");
+  timeoutActiveReminderOnWebsite();
+  lockServo();
+  allLightsOff();
+  currentState = REMINDER_IDLE;
+  lastReminderPoll = 0;
+  pollReminderState();
+}
+
+void updateDispensingFlow() {
+  if (currentState != DISPENSING) {
+    return;
+  }
+
+  if (millis() - lastIrDebugPrintAt >= IR_DEBUG_PRINT_INTERVAL_MS) {
+    lastIrDebugPrintAt = millis();
+    printIrStatus();
+  }
+
+  if (irDoseDetectedOnce()) {
+    dispensedCount++;
+    Serial.print("IR dose count: ");
+    Serial.print(dispensedCount);
+    Serial.print(" / ");
+    Serial.println(activeDoseQuantity);
+
+    if (dispensedCount >= activeDoseQuantity) {
+      finishDispensingSuccess();
+      return;
+    }
+  }
+
+  if (millis() - dispensingStartTime >= DISPENSING_TIMEOUT_MS) {
+    finishDispensingTimeout();
+  }
 }
 
 
@@ -773,6 +1575,19 @@ void setup() {
 
   Serial.println();
   Serial.println("=== Buzzer + Button + LEDs + Face Detect + Servo Test ===");
+  printWakeupReason();
+  loadRuntimeConfig();
+  printRuntimeConfig();
+  printSerialConfigHelp();
+
+  Serial.print("Serial config window: ");
+  Serial.print(SERIAL_CONFIG_WINDOW_MS / 1000);
+  Serial.println(" seconds. Send commands now if the ngrok URL changed.");
+  unsigned long configWindowStarted = millis();
+  while (millis() - configWindowStarted < SERIAL_CONFIG_WINDOW_MS) {
+    updateSerialConfigCommands();
+    delay(20);
+  }
 
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(YELLOW_LED_PIN, OUTPUT);
@@ -780,6 +1595,7 @@ void setup() {
   pinMode(WHITE_LED_PIN, OUTPUT);
 
   pinMode(BUZZER_PIN, OUTPUT);
+  rtc_gpio_deinit((gpio_num_t) BUTTON_PIN);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
 
@@ -825,6 +1641,7 @@ void setup() {
 
   if (ensureWiFiConnected()) {
     refreshDeviceStatus(true);
+    pollFaceEnrollmentCommand();
     pollReminderState();
   }
 
@@ -843,8 +1660,24 @@ void setup() {
 // Loop
 // =====================
 void loop() {
+  updateSerialConfigCommands();
   updateBuzzer();
+  updateDispensingFlow();
   updateServoAutoLock();
+
+  if (currentState != DISPENSING
+      && currentState != FACE_VERIFYING
+      && currentState != FACE_ENROLLING
+      && millis() - lastFaceEnrollmentPoll >= FACE_ENROLLMENT_COMMAND_POLL_MS) {
+    lastFaceEnrollmentPoll = millis();
+    pollFaceEnrollmentCommand();
+  }
+
+  if (currentState == REMINDER_IDLE
+      && millis() - lastDeviceStatusPoll >= DEVICE_STATUS_POLL_MS) {
+    lastDeviceStatusPoll = millis();
+    refreshDeviceStatus(false);
+  }
 
   if (currentState == REMINDER_IDLE
       && millis() - lastReminderPoll >= DEVICE_REMINDER_POLL_MS) {
@@ -856,25 +1689,6 @@ void loop() {
       && millis() - lastDeviceStatusPoll >= DEVICE_STATUS_POLL_MS) {
     lastDeviceStatusPoll = millis();
     refreshDeviceStatus(false);
-  }
-
-  if (currentState == DISPENSING && medicationPassedIrOnce()) {
-    activeTakenQuantity++;
-    Serial.print("IR detected medication passing: ");
-    Serial.print(activeTakenQuantity);
-    Serial.print(" / ");
-    Serial.println(activeTargetQuantity);
-
-    bool completed = reportMedicationDispensedToWebsite();
-    if (completed || activeTakenQuantity >= activeTargetQuantity) {
-      finishDispensingFlow();
-    }
-  }
-
-  if (currentState == DISPENSING
-      && dispensingStartTime > 0
-      && millis() - dispensingStartTime >= activeDispenseTimeoutMs) {
-    timeoutDispensingFlow();
   }
 
   if (buttonPressedOnce()) {
@@ -889,14 +1703,23 @@ void loop() {
     else if (currentState == REMINDER_BUZZING) {
       stopBuzzer();
 
+      if (activeRequiresPasswordUnlock) {
+        currentState = FACE_REMOTE_UNLOCK_WAITING;
+        showVerificationFailed();
+        Serial.println("Face enrollment is not complete. Waiting for website password unlock.");
+        Serial.println("Open Profile, enter the pill box unlock password, then IR counting will start.");
+        refreshDeviceStatus(false);
+        return;
+      }
+
       currentState = FACE_VERIFYING;
 
       bool passed = runFaceVerification();
 
       if (passed) {
-        startDispensingFlow();
         reportFaceSuccessToWebsite();
-        Serial.println("Green LED ON. Verification success. Servo unlocked. Waiting for IR medication count.");
+        startDispensingFlow("face recognition");
+        Serial.println("Green LED ON. Verification success. Servo unlocked for dispensing.");
       } else {
         handleFaceFailureResult();
       }
@@ -910,19 +1733,23 @@ void loop() {
       bool passed = runFaceVerification();
 
       if (passed) {
-        startDispensingFlow();
         reportFaceSuccessToWebsite();
-        Serial.println("Green LED ON. Verification success. Servo unlocked. Waiting for IR medication count.");
+        startDispensingFlow("face recognition retry");
+        Serial.println("Green LED ON. Verification success. Servo unlocked for dispensing.");
       } else {
         handleFaceFailureResult();
       }
     }
 
-    else if (currentState == FACE_SUCCESS || currentState == DISPENSING) {
-      Serial.print("Already verified. Waiting for IR count ");
-      Serial.print(activeTakenQuantity);
+    else if (currentState == FACE_SUCCESS) {
+      Serial.println("Already verified.");
+    }
+
+    else if (currentState == DISPENSING) {
+      Serial.print("Dispensing in progress. IR count ");
+      Serial.print(dispensedCount);
       Serial.print(" / ");
-      Serial.println(activeTargetQuantity);
+      Serial.println(activeDoseQuantity);
     }
 
     else if (currentState == FACE_REMOTE_UNLOCK_WAITING) {

@@ -77,13 +77,13 @@
                 <div class="mb-3">
                     <label class="form-label">Product Unlock Code</label>
                     <input type="text" name="product_code" class="form-control" value="{{ current_user.product_code or '' }}" placeholder="{{ default_product_code }}">
-                    <div class="form-text">After linking a product code for the first time, the page will open the guided face enrollment flow.</div>
+                    <div class="form-text">Example format: {{ product_code_example }}. Test activation code: {{ universal_test_product_code }}.</div>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">XIAO Device ID</label>
                     <input type="text" name="device_id" class="form-control" value="{{ current_user.device_id or '' }}" placeholder="{{ default_device_id }}">
-                    <div class="form-text">This links the webpage account to the physical ESP32S3 device.</div>
+                    <div class="form-text">Leave blank with {{ universal_test_product_code }} to generate a test device ID.</div>
                 </div>
 
                 <div class="mb-3 account-edit-wide">
@@ -161,6 +161,35 @@
     </div>
 </section>
 
+{% if current_user.product_code and not face_enrollment_gate.has_completed %}
+<section id="face-enrollment-password" class="section-block mt-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-lg-7">
+            <span class="section-kicker">Password Fallback</span>
+            <h2 class="section-title mb-2">Use Password Unlock</h2>
+            {% if face_enrollment_gate.password_fallback_required %}
+                <p class="text-muted mb-0">Face enrollment has failed {{ face_enrollment_gate.failed_attempts }} times. Use the pill box unlock password for now, then retry enrollment when the camera is ready.</p>
+            {% else %}
+                <p class="text-muted mb-0">Face enrollment is not complete. If a reminder is due before enrollment succeeds, the pill box will ask for password unlock.</p>
+            {% endif %}
+        </div>
+        <div class="col-lg-5">
+            <form method="post" class="row g-2">
+                <input type="hidden" name="form_type" value="face_enrollment_password_unlock">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-sm-8">
+                    <label class="form-label">Pill Box Unlock Password</label>
+                    <input type="password" name="unlock_password" class="form-control" autocomplete="current-password" required>
+                </div>
+                <div class="col-sm-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Confirm</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <section id="features" class="section-block mt-4">
     <h2 class="section-title">Add Supplement Schedule</h2>
 
@@ -168,7 +197,7 @@
         <input type="hidden" name="form_type" value="schedule">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-        <div class="col-md-2 schedule-field">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Select Supplement / Pill</label>
             <select name="supplement_name" class="form-select" required>
                 <option value="">Please select</option>
@@ -178,7 +207,7 @@
             </select>
         </div>
 
-        <div class="col-md-2 schedule-field">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Select Intake Time</label>
             <select name="take_time" class="form-select" required>
                 <option value="">Please select</option>
@@ -200,14 +229,14 @@
             <div class="form-text">Window options are spaced every 5 minutes, such as +/-5, +/-10, and +/-15.</div>
         </div>
 
-        <div class="col-md-2 schedule-field">
+        <div class="col-md-3 schedule-field">
             <label class="form-label">Dose Quantity</label>
-            <select name="dose_quantity" class="form-select" required>
+            <select name="target_quantity" class="form-select" required>
                 {% for item in dose_quantity_options %}
                     <option value="{{ item }}">{{ item }}</option>
                 {% endfor %}
             </select>
-            <div class="form-text">IR sensor count target for this dose.</div>
+            <div class="form-text">The ESP waits until the IR sensor counts this many pills.</div>
         </div>
 
         <div class="col-md-3 schedule-field">
@@ -244,7 +273,7 @@
                             <td>{{ item.supplement_name }}</td>
                             <td>{{ item.take_time }}</td>
                             <td>+/-{{ item.time_window }} minutes</td>
-                            <td>{{ item.dose_quantity }}</td>
+                            <td>{{ item.target_quantity }}</td>
                             <td>{{ item.note or "None" }}</td>
                             <td>{{ item.created_at }}</td>
                             <td>
@@ -274,7 +303,7 @@
         </div>
         <div class="col-md-4">
             <div class="stat-card">
-                <h3>0</h3>
+                <h3>{{ missed_reminder_count }}</h3>
                 <p>Missed Records</p>
             </div>
         </div>

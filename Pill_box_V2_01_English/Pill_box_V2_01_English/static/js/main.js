@@ -55,6 +55,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const faceStatusUrl = document.body.dataset.faceStatusUrl;
     const unlockUrl = document.body.dataset.faceUnlockUrl || "/unlock";
+    const suppressFaceUnlockAlert = document.body.dataset.suppressFaceUnlockAlert === "true";
     const faceAlert = document.querySelector("[data-face-alert]");
     const faceAlertMessage = document.querySelector("[data-face-alert-message]");
     const faceUnlockModalElement = document.querySelector("[data-face-unlock-modal]");
@@ -304,7 +305,7 @@ document.addEventListener("DOMContentLoaded", function () {
     };
 
     const checkFaceUnlockStatus = async () => {
-        if (!faceStatusUrl) {
+        if (!faceStatusUrl || suppressFaceUnlockAlert) {
             return;
         }
 
@@ -376,8 +377,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
     registerServiceWorker().then(() => {
         updateNotificationButtons();
-        checkFaceUnlockStatus();
-        if (faceStatusUrl) {
+        if (!suppressFaceUnlockAlert) {
+            checkFaceUnlockStatus();
+        }
+        if (faceStatusUrl && !suppressFaceUnlockAlert) {
             window.setInterval(checkFaceUnlockStatus, 15000);
         }
     });
@@ -391,6 +394,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const progress = document.querySelector("[data-face-enrollment-progress]");
         const count = document.querySelector("[data-face-enrollment-count]");
         const photoWrap = document.querySelector("[data-face-enrollment-photo-wrap]");
+        const photoGrid = document.querySelector("[data-face-enrollment-photo-grid]");
         const photo = document.querySelector("[data-face-enrollment-photo]");
 
         const titleByStatus = {
@@ -412,10 +416,18 @@ document.addEventListener("DOMContentLoaded", function () {
                 statusBadge.dataset.status = status;
             }
             if (title) {
-                title.textContent = titleByStatus[status] || "Face enrollment";
+                title.textContent = data.password_fallback_required && status !== "completed"
+                    ? "Use password unlock for now"
+                    : (titleByStatus[status] || "Face enrollment");
             }
             if (message) {
-                message.textContent = data.message || "Keep your face centered and rotate the camera angle slowly.";
+                if (data.password_fallback_required && status !== "completed") {
+                    const failedAttempts = Number(data.enrollment_failed_attempts || 0);
+                    const threshold = Number(data.enrollment_failure_threshold || 3);
+                    message.textContent = `Face enrollment has failed ${failedAttempts || threshold} times. Use password unlock for now, then retry enrollment when the camera is ready.`;
+                } else {
+                    message.textContent = data.message || "Keep your face centered and rotate the camera angle slowly.";
+                }
             }
             if (progress) {
                 progress.style.width = `${percent}%`;
@@ -423,9 +435,28 @@ document.addEventListener("DOMContentLoaded", function () {
             if (count) {
                 count.textContent = `${captured} / ${requested} samples`;
             }
-            if (photoWrap && photo && data.photo_url) {
-                photo.src = `${data.photo_url}?t=${encodeURIComponent(data.updated_at || Date.now())}`;
-                photoWrap.classList.remove("d-none");
+            if (photoWrap && photoGrid) {
+                const photos = Array.isArray(data.photos) ? data.photos : [];
+                if (photos.length > 0) {
+                    photoGrid.innerHTML = "";
+                    photos.forEach((item) => {
+                        const figure = document.createElement("figure");
+                        const image = document.createElement("img");
+                        const caption = document.createElement("figcaption");
+
+                        image.src = `${item.photo_url}?t=${encodeURIComponent(item.created_at || data.updated_at || Date.now())}`;
+                        image.alt = `Saved face enrollment sample ${item.photo_index || ""}`.trim();
+                        caption.textContent = `Photo ${item.photo_index || item.photo_id} -> ${item.username || data.person_name}`;
+
+                        figure.appendChild(image);
+                        figure.appendChild(caption);
+                        photoGrid.appendChild(figure);
+                    });
+                    photoWrap.classList.remove("d-none");
+                } else if (photo && data.photo_url) {
+                    photo.src = `${data.photo_url}?t=${encodeURIComponent(data.updated_at || Date.now())}`;
+                    photoWrap.classList.remove("d-none");
+                }
             }
 
             return status === "completed" || status === "failed" || status === "expired";
