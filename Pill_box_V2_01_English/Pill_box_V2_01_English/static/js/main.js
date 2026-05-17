@@ -391,6 +391,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const progress = document.querySelector("[data-face-enrollment-progress]");
         const count = document.querySelector("[data-face-enrollment-count]");
         const photoWrap = document.querySelector("[data-face-enrollment-photo-wrap]");
+        const photoGrid = document.querySelector("[data-face-enrollment-photo-grid]");
         const photo = document.querySelector("[data-face-enrollment-photo]");
 
         const titleByStatus = {
@@ -423,9 +424,28 @@ document.addEventListener("DOMContentLoaded", function () {
             if (count) {
                 count.textContent = `${captured} / ${requested} samples`;
             }
-            if (photoWrap && photo && data.photo_url) {
-                photo.src = `${data.photo_url}?t=${encodeURIComponent(data.updated_at || Date.now())}`;
-                photoWrap.classList.remove("d-none");
+            if (photoWrap && photoGrid) {
+                const photos = Array.isArray(data.photos) ? data.photos : [];
+                if (photos.length > 0) {
+                    photoGrid.innerHTML = "";
+                    photos.forEach((item) => {
+                        const figure = document.createElement("figure");
+                        const image = document.createElement("img");
+                        const caption = document.createElement("figcaption");
+
+                        image.src = `${item.photo_url}?t=${encodeURIComponent(item.created_at || data.updated_at || Date.now())}`;
+                        image.alt = `Saved face enrollment sample ${item.photo_index || ""}`.trim();
+                        caption.textContent = `Photo ${item.photo_index || item.photo_id} -> ${item.username || data.person_name}`;
+
+                        figure.appendChild(image);
+                        figure.appendChild(caption);
+                        photoGrid.appendChild(figure);
+                    });
+                    photoWrap.classList.remove("d-none");
+                } else if (photo && data.photo_url) {
+                    photo.src = `${data.photo_url}?t=${encodeURIComponent(data.updated_at || Date.now())}`;
+                    photoWrap.classList.remove("d-none");
+                }
             }
 
             return status === "completed" || status === "failed" || status === "expired";

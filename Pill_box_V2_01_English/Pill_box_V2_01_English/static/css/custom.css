@@ -537,11 +537,39 @@ body {
     font-weight: 700;
 }
 
+.face-enrollment-photo-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.face-enrollment-photo-grid figure {
+    background: #ffffff;
+    border: 1px solid #dce7f2;
+    border-radius: 8px;
+    margin: 0;
+    overflow: hidden;
+}
+
+.face-enrollment-photo-grid img,
 .face-enrollment-photo img {
     border: 1px solid #dce7f2;
     border-radius: 8px;
-    max-width: min(420px, 100%);
+    display: block;
+    max-width: 100%;
     width: 100%;
+}
+
+.face-enrollment-photo-grid img {
+    border: 0;
+    border-radius: 0;
+}
+
+.face-enrollment-photo-grid figcaption {
+    color: #52677f;
+    font-size: 0.82rem;
+    font-weight: 800;
+    padding: 10px 12px;
 }
 
 .schedule-form .form-label {

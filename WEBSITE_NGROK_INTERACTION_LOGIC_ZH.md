@@ -79,6 +79,16 @@ face_enrollment_session
   device_id
   photo_data
 
+face_photo
+  id
+  session_id -> face_enrollment_session.id
+  user_id -> user.id
+  username
+  photo_index
+  device_photo_id
+  device_id
+  photo_data
+
 device_reminder_event
   id
   user_id -> user.id
@@ -93,6 +103,14 @@ device_reminder_event
 ```
 
 当前 `product_code` 相当于产品序列号或产品解锁码，示例是 `5506123`。`device_id` 用于把一个账号绑定到具体 ESP 设备，例如 `xiao-esp32s3-sense-5506123`。
+
+开发测试万能激活码：
+
+```text
+5506DEV
+```
+
+`5506DEV` 专门用于反复注册新用户、测试首次人脸录入。它可以被多个测试账号重复使用；正式产品码仍然保持唯一。ESP 草图中 `PRODUCT_CODE` 设为 `5506DEV` 后，`/api/face-enrollment/device-command` 会领取最新一个还在 pending/started 的测试录入 session。
 
 ## 4. 用户注册到产品绑定
 
@@ -122,6 +140,7 @@ sequenceDiagram
 - 登录密码和药盒解锁密码分开存储。
 - 密钥题和答案保存为哈希。
 - Profile 页面可以绑定 `product_code` 和 `device_id`。
+- 测试激活码 `5506DEV` 可以被多个新账号重复使用；如果 Device ID 留空，会自动生成测试设备 ID。
 
 还需要补齐：
 
@@ -163,12 +182,14 @@ sequenceDiagram
 - Web 可以创建人脸录入会话。
 - Web 人脸录入页会轮询状态。
 - 后端已经有 ESP 端接口：`device-command`、`device-result`、`device-photo`。
+- 后端已新增 `face_photo` 表，把 `photo_id`、`session_id`、`user_id`、`username`、`photo_index`、`device_photo_id` 与照片数据绑定。
+- ESP 已加入首次录入状态机：在 idle 时轮询 `/api/face-enrollment/device-command`，收到 `command=enroll` 后采集样本、调用 `recognition.enroll(person_name)`、上传每张照片、最后回传 `completed/failed`。
+- Web 录入页面会显示多张已保存照片及其账号绑定信息。
 
 还需要补齐：
 
-- `.ino` 当前没有调用人脸录入 API。
-- 当前只保存一张预览照片。若要严格实现“照片编号与用户账号名绑定”，建议增加 `face_photo` 表，保存 `photo_id`、`session_id`、`user_id`、`username`、`photo_index`、`device_photo_id`。
-- 需要在 ESP 端加入首次录入状态机：发现 `command=enroll` 后唤醒摄像头、采集、上传结果和照片。
+- 在真实硬件上确认 `recognition.enroll(person_name)`、JPEG 上传和内存占用是否稳定。
+- 如果需要长期保存完整人脸模型或跨设备同步模型，需要额外设计模型导出/导入机制；当前保存的是网页预览照片和 ESP 本地识别库。
 
 ## 6. 用户设定药物和时间后动态联动 ESP
 
@@ -290,9 +311,9 @@ sequenceDiagram
 
 | 场景 | 方法与路径 | 当前状态 | 说明 |
 | --- | --- | --- | --- |
-| ESP 查询是否要人脸录入 | `POST /api/face-enrollment/device-command` | 已有后端，ESP 未接入 | 返回 `command=idle` 或 `command=enroll` |
-| ESP 上传录入结果 | `POST /api/face-enrollment/device-result` | 已有后端，ESP 未接入 | 保存 `started/completed/failed/expired` |
-| ESP 上传录入照片 | `POST /api/face-enrollment/device-photo/<id>` | 已有后端，ESP 未接入 | body 是 JPEG 字节 |
+| ESP 查询是否要人脸录入 | `POST /api/face-enrollment/device-command` | 已接入 | 返回 `command=idle` 或 `command=enroll` |
+| ESP 上传录入结果 | `POST /api/face-enrollment/device-result` | 已接入 | 保存 `started/completed/failed/expired` |
+| ESP 上传录入照片 | `POST /api/face-enrollment/device-photo/<id>` | 已接入 | body 是 JPEG 字节，附带 `photo_index` 和 `device_photo_id` |
 | ESP 查询服药提醒 | `POST /api/device/reminder-state` | 已接入 | 返回 `idle/ring_reminder/wait_for_pin` |
 | ESP 完成一次提醒 | `POST /api/device/reminder-complete` | 已接入 | IR 计数达到 Dose Quantity 后标记 `completed` |
 | ESP 上报开锁未吃药 | `POST /api/device/reminder-timeout` | 已接入 | 600 秒内数量不达标后标记 `missed` |
@@ -367,6 +388,7 @@ const char* WIFI_SSID = "你的 WiFi";
 const char* WIFI_PASSWORD = "你的 WiFi 密码";
 const char* SERVER_BASE_URL = "https://xxxx.ngrok-free.app";
 const char* DEVICE_API_TOKEN = "5506-local-device-token";
+const char* PRODUCT_CODE = "5506DEV";
 const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
 ```
 
@@ -403,6 +425,6 @@ Waiting for the website database reminder.
 
 1. 新增“找回药盒解锁密码”页面，通过密钥题重设 `unlock_password_hash`。
 2. 增加服药历史页面，显示每次 `completed/missed`、目标数量、实际 IR 计数和时间。
-3. 修改 ESP：接入 `/api/face-enrollment/device-command`、`device-result` 和 `device-photo`。
+3. 在 Arduino IDE 中编译并上传最新 `.ino`，实测首次人脸录入、照片上传和 ESP 重启后识别库是否保留。
 4. 如果需要更细粒度日志，再新增 `POST /api/device/intake-count`，让 ESP 每次 IR 变化都实时上报。
 5. 为多人长期联调部署云端服务器，避免本机/ngrok 关机后无法访问。

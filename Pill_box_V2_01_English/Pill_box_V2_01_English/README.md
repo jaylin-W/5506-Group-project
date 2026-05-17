@@ -90,6 +90,14 @@ The current demo product code is:
 5506123
 ```
 
+Universal test activation code for repeated new-user face enrollment:
+
+```text
+5506DEV
+```
+
+Use `5506DEV` when you want to register many fresh test users and run first-time face enrollment with the same ESP32S3 camera. Formal product codes remain unique, but `5506DEV` may be reused by multiple test accounts.
+
 For future pill box hardware integration, POST a face recognition failure to:
 
 ```text
@@ -109,6 +117,7 @@ const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* SERVER_BASE_URL = "https://your-ngrok-url.ngrok-free.dev";
 const char* DEVICE_API_TOKEN = "5506-local-device-token";
+const char* PRODUCT_CODE = "5506DEV";
 const char* DEVICE_ID = "xiao-esp32s3-sense-5506123";
 ```
 
@@ -139,8 +148,9 @@ User clicks Start Face Enrollment
 Website opens a guided enrollment page
 ESP32 polls /api/face-enrollment/device-command
 ESP32 runs recognition.enroll(name) for several samples while the user rotates the product camera
-ESP32 uploads enrollment result and one JPEG preview photo
-Website stores the enrollment status and photo in SQLite
+ESP32 uploads each JPEG sample with photo_index and device_photo_id
+Website stores the enrollment status and the face_photo records in SQLite
+Each face_photo links photo_id, session_id, user_id, username, photo_index, and device_photo_id
 ```
 
 ## Do Not Upload These to GitHub

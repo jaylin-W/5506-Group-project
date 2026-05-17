@@ -77,13 +77,13 @@
                 <div class="mb-3">
                     <label class="form-label">Product Unlock Code</label>
                     <input type="text" name="product_code" class="form-control" value="{{ current_user.product_code or '' }}" placeholder="{{ default_product_code }}">
-                    <div class="form-text">Example format: {{ product_code_example }}. Your product code: {{ default_product_code }}.</div>
+                    <div class="form-text">Example format: {{ product_code_example }}. Test activation code: {{ universal_test_product_code }}.</div>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">XIAO Device ID</label>
                     <input type="text" name="device_id" class="form-control" value="{{ current_user.device_id or '' }}" placeholder="{{ default_device_id }}">
-                    <div class="form-text">This links the webpage account to the physical ESP32S3 device.</div>
+                    <div class="form-text">Leave blank with {{ universal_test_product_code }} to generate a test device ID.</div>
                 </div>
 
                 <div class="mb-3 account-edit-wide">
