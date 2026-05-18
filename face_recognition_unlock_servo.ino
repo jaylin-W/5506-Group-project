@@ -43,7 +43,7 @@ using eloq::face::recognition;
 
 #define BUZZER_PIN      44
 #define BUTTON_PIN      9
-#define IR_SENSOR_PIN   8
+#define DEFAULT_IR_SENSOR_PIN   43
 
 
 // =====================
@@ -60,7 +60,7 @@ const char* WIFI_PASSWORD = "wdds3882";
 const char* DEFAULT_SERVER_BASE_URL = "https://panning-snagged-constrict.ngrok-free.dev";
 const bool DEFAULT_FORCE_HTTP_FOR_ESP = false;  // Set with SET_HTTP 1 only when the target really accepts HTTP.
 const char* DEFAULT_DEVICE_API_TOKEN = "5506-local-device-token";
-const char* DEFAULT_PRODUCT_CODE = "5506DEV";  // Universal test activation code for repeated enrollment tests.
+const char* DEFAULT_PRODUCT_CODE = "5506DEV";
 const char* DEFAULT_DEVICE_ID = "xiao-esp32s3-sense-5506123";
 
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000;
@@ -71,7 +71,8 @@ const unsigned long DEVICE_STATUS_POLL_MS = 3000;
 const unsigned long DEVICE_REMINDER_POLL_MS = 15000;
 const unsigned long FACE_ENROLLMENT_COMMAND_POLL_MS = 10000;
 const unsigned long DISPENSING_TIMEOUT_MS = 600000UL;
-const int IR_ACTIVE_LEVEL = LOW;
+const int DEFAULT_IR_ACTIVE_LEVEL = LOW;
+const bool DEFAULT_IR_USE_PULLUP = true;
 const unsigned long IR_DEBOUNCE_MS = 8;
 const unsigned long IR_COUNT_COOLDOWN_MS = 120;
 const unsigned long IR_DEBUG_PRINT_INTERVAL_MS = 3000;
@@ -101,6 +102,9 @@ String deviceApiToken = DEFAULT_DEVICE_API_TOKEN;
 String productCode = DEFAULT_PRODUCT_CODE;
 String deviceId = DEFAULT_DEVICE_ID;
 bool forceHttpForEsp = DEFAULT_FORCE_HTTP_FOR_ESP;
+int irActiveLevel = DEFAULT_IR_ACTIVE_LEVEL;
+bool irUsePullup = DEFAULT_IR_USE_PULLUP;
+int irSensorPin = DEFAULT_IR_SENSOR_PIN;
 String serialCommandBuffer = "";
 unsigned long lastSerialCommandCharAt = 0;
 unsigned long lastConfigWarningAt = 0;
@@ -141,8 +145,8 @@ bool lastButtonReading = HIGH;
 bool stableButtonState = HIGH;
 unsigned long lastDebounceTime = 0;
 
-bool lastIrReading = !IR_ACTIVE_LEVEL;
-bool stableIrState = !IR_ACTIVE_LEVEL;
+bool lastIrReading = !DEFAULT_IR_ACTIVE_LEVEL;
+bool stableIrState = !DEFAULT_IR_ACTIVE_LEVEL;
 unsigned long lastIrDebounceTime = 0;
 unsigned long lastIrCountAt = 0;
 unsigned long lastIrDebugPrintAt = 0;
@@ -316,8 +320,26 @@ bool buttonPressedOnce() {
 
 
 bool irDoseDetectedOnce() {
-  bool reading = digitalRead(IR_SENSOR_PIN);
+  bool reading = digitalRead(irSensorPin);
   unsigned long now = millis();
+  bool activeNow = reading == irActiveLevel;
+  bool wasActive = lastIrReading == irActiveLevel;
+
+  if (activeNow && !wasActive) {
+    lastIrReading = reading;
+    lastIrDebounceTime = now;
+    stableIrState = reading;
+    Serial.print("IR active pulse: ");
+    Serial.println(reading == HIGH ? "HIGH" : "LOW");
+
+    if (now - lastIrCountAt >= IR_COUNT_COOLDOWN_MS) {
+      lastIrCountAt = now;
+      return true;
+    }
+
+    Serial.println("IR active pulse ignored by cooldown.");
+    return false;
+  }
 
   if (reading != lastIrReading) {
     lastIrDebounceTime = now;
@@ -330,7 +352,7 @@ bool irDoseDetectedOnce() {
       Serial.print("IR stable state: ");
       Serial.println(stableIrState == HIGH ? "HIGH" : "LOW");
 
-      if (stableIrState == IR_ACTIVE_LEVEL) {
+      if (stableIrState == irActiveLevel) {
         if (now - lastIrCountAt >= IR_COUNT_COOLDOWN_MS) {
           lastIrCountAt = now;
           return true;
@@ -344,7 +366,7 @@ bool irDoseDetectedOnce() {
 }
 
 void resetIrDetector() {
-  bool reading = digitalRead(IR_SENSOR_PIN);
+  bool reading = digitalRead(irSensorPin);
   lastIrReading = reading;
   stableIrState = reading;
   lastIrDebounceTime = millis();
@@ -354,26 +376,138 @@ void resetIrDetector() {
   Serial.print("IR baseline: ");
   Serial.print(reading == HIGH ? "HIGH" : "LOW");
   Serial.print(", active level: ");
-  Serial.println(IR_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
-  if (reading == IR_ACTIVE_LEVEL) {
+  Serial.println(irActiveLevel == HIGH ? "HIGH" : "LOW");
+  if (reading == irActiveLevel) {
     Serial.println("IR warning: sensor is already active at dispensing start.");
   }
 }
 
 void printIrStatus() {
-  bool reading = digitalRead(IR_SENSOR_PIN);
+  bool reading = digitalRead(irSensorPin);
+  Serial.print("IR pin=GPIO");
+  Serial.print(irSensorPin);
+  Serial.print(", ");
   Serial.print("IR raw=");
   Serial.print(reading == HIGH ? "HIGH" : "LOW");
   Serial.print(", stable=");
   Serial.print(stableIrState == HIGH ? "HIGH" : "LOW");
   Serial.print(", active_level=");
-  Serial.print(IR_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
+  Serial.print(irActiveLevel == HIGH ? "HIGH" : "LOW");
+  Serial.print(", pin_mode=");
+  Serial.print(irUsePullup ? "INPUT_PULLUP" : "INPUT");
   Serial.print(", raw_active=");
-  Serial.print(reading == IR_ACTIVE_LEVEL ? "yes" : "no");
+  Serial.print(reading == irActiveLevel ? "yes" : "no");
   Serial.print(", count=");
   Serial.print(dispensedCount);
   Serial.print(" / ");
   Serial.println(activeDoseQuantity);
+}
+
+void applyIrPinMode() {
+  pinMode(irSensorPin, irUsePullup ? INPUT_PULLUP : INPUT);
+  delay(5);
+  resetIrDetector();
+}
+
+int parseIrActiveLevel(String value, int fallbackValue) {
+  value.trim();
+  value.toLowerCase();
+
+  if (value == "1" || value == "high" || value == "h") {
+    return HIGH;
+  }
+  if (value == "0" || value == "low" || value == "l") {
+    return LOW;
+  }
+
+  return fallbackValue;
+}
+
+bool isSafeIrCandidatePin(int pin) {
+  return pin == 6 || pin == 7 || pin == 8 || pin == 43;
+}
+
+int parseIrPin(String value, int fallbackValue) {
+  value.trim();
+  value.toUpperCase();
+  if (value.startsWith("GPIO")) {
+    value = value.substring(4);
+  }
+  if (value.startsWith("D")) {
+    value = value.substring(1);
+  }
+
+  int parsed = value.toInt();
+  if (isSafeIrCandidatePin(parsed)) {
+    return parsed;
+  }
+  return fallbackValue;
+}
+
+void runIrTest(unsigned long durationMs) {
+  Serial.println("IR test started. Move a pill/object through the sensor now.");
+  unsigned long startedAt = millis();
+  unsigned long lastPrintAt = 0;
+  bool lastReading = digitalRead(irSensorPin);
+  printIrStatus();
+
+  while (millis() - startedAt < durationMs) {
+    updateSerialConfigCommands();
+    bool reading = digitalRead(irSensorPin);
+    if (reading != lastReading || millis() - lastPrintAt >= 500) {
+      lastReading = reading;
+      lastPrintAt = millis();
+      printIrStatus();
+    }
+    delay(10);
+  }
+
+  Serial.println("IR test finished.");
+}
+
+void runIrScan(unsigned long durationMs) {
+  const int pins[] = {6, 7, 8, 43};
+  const int pinCount = sizeof(pins) / sizeof(pins[0]);
+  bool lastReadings[pinCount];
+  unsigned long startedAt = millis();
+  unsigned long lastPrintAt = 0;
+
+  Serial.println("IR pin scan started. Move a pill/object through the sensor now.");
+  Serial.println("Watch for any GPIO that changes HIGH/LOW.");
+
+  for (int i = 0; i < pinCount; i++) {
+    pinMode(pins[i], irUsePullup ? INPUT_PULLUP : INPUT);
+    lastReadings[i] = digitalRead(pins[i]);
+  }
+
+  while (millis() - startedAt < durationMs) {
+    updateSerialConfigCommands();
+    bool changed = false;
+
+    for (int i = 0; i < pinCount; i++) {
+      bool reading = digitalRead(pins[i]);
+      if (reading != lastReadings[i]) {
+        lastReadings[i] = reading;
+        changed = true;
+      }
+    }
+
+    if (changed || millis() - lastPrintAt >= 1000) {
+      lastPrintAt = millis();
+      Serial.print("IR_SCAN");
+      for (int i = 0; i < pinCount; i++) {
+        Serial.print(" GPIO");
+        Serial.print(pins[i]);
+        Serial.print("=");
+        Serial.print(lastReadings[i] == HIGH ? "H" : "L");
+      }
+      Serial.println();
+    }
+    delay(10);
+  }
+
+  applyIrPinMode();
+  Serial.println("IR pin scan finished.");
 }
 
 
@@ -397,6 +531,15 @@ void loadRuntimeConfig() {
   productCode = devicePrefs.getString("product", DEFAULT_PRODUCT_CODE);
   deviceId = devicePrefs.getString("device_id", DEFAULT_DEVICE_ID);
   forceHttpForEsp = devicePrefs.getBool("force_http", DEFAULT_FORCE_HTTP_FOR_ESP);
+  irSensorPin = devicePrefs.getInt("ir_pin", DEFAULT_IR_SENSOR_PIN);
+  if (!isSafeIrCandidatePin(irSensorPin)) {
+    irSensorPin = DEFAULT_IR_SENSOR_PIN;
+  }
+  irActiveLevel = devicePrefs.getInt("ir_active", DEFAULT_IR_ACTIVE_LEVEL);
+  if (irActiveLevel != HIGH && irActiveLevel != LOW) {
+    irActiveLevel = DEFAULT_IR_ACTIVE_LEVEL;
+  }
+  irUsePullup = devicePrefs.getBool("ir_pullup", DEFAULT_IR_USE_PULLUP);
 }
 
 String effectiveServerBaseUrl() {
@@ -426,6 +569,12 @@ void printRuntimeConfig() {
   Serial.println(deviceId);
   Serial.print("  API token: ");
   Serial.println(deviceApiToken.length() > 0 ? "[saved]" : "[not set]");
+  Serial.print("  IR pin: GPIO");
+  Serial.println(irSensorPin);
+  Serial.print("  IR active level: ");
+  Serial.println(irActiveLevel == HIGH ? "HIGH" : "LOW");
+  Serial.print("  IR pin mode: ");
+  Serial.println(irUsePullup ? "INPUT_PULLUP" : "INPUT");
 }
 
 void printSerialConfigHelp() {
@@ -441,6 +590,11 @@ void printSerialConfigHelp() {
   Serial.println("  RECONNECT");
   Serial.println("  POLL");
   Serial.println("  IR_STATUS");
+  Serial.println("  IR_TEST");
+  Serial.println("  IR_SCAN");
+  Serial.println("  SET_IR_PIN GPIO43");
+  Serial.println("  SET_IR_ACTIVE LOW");
+  Serial.println("  SET_IR_PULLUP 1");
   Serial.println("  CLEAR_CONFIG");
 }
 
@@ -478,6 +632,9 @@ void resetRuntimeConfigToDefaults() {
   productCode = DEFAULT_PRODUCT_CODE;
   deviceId = DEFAULT_DEVICE_ID;
   forceHttpForEsp = DEFAULT_FORCE_HTTP_FOR_ESP;
+  irSensorPin = DEFAULT_IR_SENSOR_PIN;
+  irActiveLevel = DEFAULT_IR_ACTIVE_LEVEL;
+  irUsePullup = DEFAULT_IR_USE_PULLUP;
 }
 
 void handleSerialConfigCommand(String command) {
@@ -522,6 +679,47 @@ void handleSerialConfigCommand(String command) {
 
   if (command == "IR_STATUS") {
     printIrStatus();
+    return;
+  }
+
+  if (command == "IR_TEST") {
+    runIrTest(10000);
+    return;
+  }
+
+  if (command == "IR_SCAN") {
+    runIrScan(15000);
+    return;
+  }
+
+  if (command.startsWith("SET_IR_PIN ")) {
+    irSensorPin = parseIrPin(command.substring(strlen("SET_IR_PIN ")), irSensorPin);
+    if (prefsReady) {
+      devicePrefs.putInt("ir_pin", irSensorPin);
+    }
+    applyIrPinMode();
+    Serial.print("IR pin saved: GPIO");
+    Serial.println(irSensorPin);
+    return;
+  }
+
+  if (command.startsWith("SET_IR_ACTIVE ")) {
+    irActiveLevel = parseIrActiveLevel(command.substring(strlen("SET_IR_ACTIVE ")), irActiveLevel);
+    if (prefsReady) {
+      devicePrefs.putInt("ir_active", irActiveLevel);
+    }
+    applyIrPinMode();
+    Serial.print("IR active level saved: ");
+    Serial.println(irActiveLevel == HIGH ? "HIGH" : "LOW");
+    return;
+  }
+
+  if (command.startsWith("SET_IR_PULLUP ")) {
+    irUsePullup = parseConfigBool(command.substring(strlen("SET_IR_PULLUP ")), irUsePullup);
+    saveBoolConfig("ir_pullup", irUsePullup);
+    applyIrPinMode();
+    Serial.print("IR pin mode saved: ");
+    Serial.println(irUsePullup ? "INPUT_PULLUP" : "INPUT");
     return;
   }
 
@@ -1205,7 +1403,7 @@ bool pollReminderState() {
       return true;
     }
 
-    if (currentState == REMINDER_IDLE || currentState == FACE_SUCCESS) {
+    if (currentState == REMINDER_IDLE || currentState == FACE_SUCCESS || currentState == FACE_FAILED || currentState == FACE_REMOTE_UNLOCK_WAITING) {
       activeReminderKey = reminderKey;
       activeReminderLabel = jsonStringValue(response, "supplement_name");
       activeReminderTime = jsonStringValue(response, "take_time");
@@ -1600,7 +1798,7 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   rtc_gpio_deinit((gpio_num_t) BUTTON_PIN);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
+  applyIrPinMode();
 
   allLightsOff();
   digitalWrite(BUZZER_PIN, LOW);
@@ -1682,7 +1880,7 @@ void loop() {
     refreshDeviceStatus(false);
   }
 
-  if (currentState == REMINDER_IDLE
+  if ((currentState == REMINDER_IDLE || currentState == FACE_REMOTE_UNLOCK_WAITING)
       && millis() - lastReminderPoll >= DEVICE_REMINDER_POLL_MS) {
     lastReminderPoll = millis();
     pollReminderState();

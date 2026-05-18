@@ -4,7 +4,7 @@ from flask_login import (
     UserMixin,
     login_user,
     logout_user,
-    login_required,
+    login_required, 
     current_user,
 )
 from flask_wtf.csrf import CSRFError, CSRFProtect
@@ -79,7 +79,7 @@ def get_rate_limit_key():
 limiter = Limiter(
     app=app,
     key_func=get_rate_limit_key,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=["2000 per day", "500 per hour"]
 )
 
 APP_ROOT = Path(__file__).resolve().parent
@@ -1081,7 +1081,9 @@ def find_user_id_from_payload(payload):
     conn = get_db_connection()
     try:
         row = None
-        if device_id:
+        if product_code and not is_universal_test_product_code(product_code):
+            row = conn.execute("SELECT id FROM user WHERE product_code = ?", (product_code,)).fetchone()
+        if row is None and device_id:
             row = conn.execute("SELECT id FROM user WHERE device_id = ?", (device_id,)).fetchone()
         if row is None and user_id:
             row = conn.execute("SELECT id FROM user WHERE id = ?", (user_id,)).fetchone()
@@ -1825,6 +1827,7 @@ def push_public_key():
 @app.route("/api/push/subscribe", methods=["POST"])
 @csrf.exempt
 @login_required
+@limiter.limit("10000 per hour", override_defaults=True)
 def push_subscribe():
     subscription = request.get_json(silent=True) or {}
     saved, error = save_push_subscription(current_user.id, subscription)
@@ -1953,6 +1956,7 @@ def report_face_unlock_failure():
 
 @app.route("/api/face-unlock/device-status", methods=["POST"])
 @csrf.exempt
+@limiter.exempt
 def face_unlock_device_status():
     payload = get_device_payload()
     user_id, error = resolve_device_request_user(payload)
